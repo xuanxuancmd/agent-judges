@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from ..debate import DebateOrchestrator
 from ..escalation import EscalationRouter
 from ..llm.broker import LLMBroker
+from ..llm.credentials import env_api_key, is_host_provider
 from ..meta_review import MetaReviewer
 from ..output import render_json, render_markdown
 from ..reviewer import ReviewerRegistry
@@ -133,6 +134,18 @@ def review(
         default_base_url=base_url,
         max_budget_usd=max_cost,  # api_key=None: litellm resolves per-provider env keys
     )
+
+    # credential hint: aj normally inherits the calling agent session's env
+    if is_host_provider(effective_model) and not (
+        env_api_key(effective_model) or base_url
+    ):
+        _echo_err(
+            f"Warning: 未检测到 {effective_model} 的凭证"
+            f"(ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN/CLAUDE_CODE_OAUTH_TOKEN/"
+            f"OPENAI_API_KEY)。aj 由 Claude Code / OpenCode 会话调用时凭证自动继承"
+            f"(Pro/Max 订阅登录除外,需 claude setup-token 或显式配置);"
+            f"独立运行请配置环境变量或 .env,或用 --base-url 指向本地网关。"
+        )
 
     # (M-4) --override-model forces every reviewer's model
     if override_model:

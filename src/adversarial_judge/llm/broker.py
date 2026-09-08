@@ -2,10 +2,18 @@
 
 Per-reviewer model injection (M-4): a reviewer may explicitly set ``model`` in
 its YAML; when it does not, the broker's ``default_model`` is used.
+
+Credential passthrough: when no explicit ``default_api_key`` /
+``default_base_url`` is given, per-model credentials are resolved from the
+host session environment (``ANTHROPIC_API_KEY`` / ``ANTHROPIC_AUTH_TOKEN`` /
+``OPENAI_API_KEY`` / ``ANTHROPIC_BASE_URL``) — see ``credentials.py``. This is
+how ``aj`` reuses the LLM access of the Claude Code / OpenCode session that
+invoked it, without its own API keys.
 """
 
 import logging
 
+from .credentials import env_api_key, env_base_url
 from .provider import LLM
 
 logger = logging.getLogger(__name__)
@@ -37,14 +45,16 @@ class LLMBroker:
     def get_llm(self, model: str | None = None) -> LLM:
         """Return a (cached) LLM instance for ``model``.
 
-        ``model=None`` falls back to ``default_model`` (M-4).
+        ``model=None`` falls back to ``default_model`` (M-4). Credentials:
+        explicit broker args win, then host-session env vars per provider,
+        then litellm's internal env fallback (api_key=None).
         """
         resolved = model or self.default_model
         if resolved not in self._cache:
             self._cache[resolved] = LLM(
                 model=resolved,
-                api_key=self.default_api_key,
-                base_url=self.default_base_url,
+                api_key=self.default_api_key or env_api_key(resolved),
+                base_url=self.default_base_url or env_base_url(resolved),
             )
         return self._cache[resolved]
 

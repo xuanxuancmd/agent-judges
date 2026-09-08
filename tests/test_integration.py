@@ -1,6 +1,9 @@
-"""Integration tests — REAL LLM calls, need ANTHROPIC_API_KEY (plan 8-10).
+"""Integration tests — REAL LLM calls (plan 8-10).
 
-Run with:
+Credentials are inherited from the environment (typically the Claude Code /
+OpenCode session that runs the test command); any one of the supported
+host-session vars is sufficient:
+
     pytest tests/test_integration.py -m integration -v
 
 Deselect with:
@@ -18,11 +21,15 @@ from typer.testing import CliRunner
 from adversarial_judge.cli import app
 from conftest import REVIEWERS_DIR
 
+_HOST_LLM_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY")
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY")),
-        reason="requires ANTHROPIC_API_KEY or OPENAI_API_KEY",
+        not any(os.getenv(var) for var in _HOST_LLM_ENV),
+        reason="requires host LLM credentials (ANTHROPIC_API_KEY / "
+        "ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY), e.g. inherited from a "
+        "Claude Code / OpenCode session",
     ),
 ]
 
