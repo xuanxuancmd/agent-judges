@@ -78,6 +78,16 @@
 | Stop hook 自动触发 | ❌ 不支持 | hook 时机不正确且难把握(agent 完全停止后才触发,无法在产出过程中实时审查) |
 | Python 库嵌入 | ❌ 不支持 | 不在 agent 运行时中 `import`,避免耦合 |
 
+**凭证模型(宿主会话继承)**: `aj` 是被编码 agent 通过 shell 调用的质量关卡,**不要求独立申请的 API key**——LLM 凭证从调用方会话环境继承,解析顺序:显式参数 > 环境变量 > litellm 内部回退(见 `llm/credentials.py`)。按宿主区分:
+
+| 宿主 | 可继承的凭证 | 说明 |
+|---|---|---|
+| Claude Code(API key 认证) | `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | 子进程继承环境变量;`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 会剥离 |
+| Claude Code(订阅登录) | ❌ 不可继承 | `/login` 凭证存于 `~/.claude/.credentials.json`,不导出;需 `claude setup-token`(`CLAUDE_CODE_OAUTH_TOKEN`,litellm 原生识别 `sk-ant-oat*` 前缀)或显式 `ANTHROPIC_API_KEY` |
+| OpenCode | ❌ 不导出 | 凭证存于 `~/.local/share/opencode/auth.json`,`opencode serve` 是管理 API 非线协议代理;推荐社区插件 `opencode-llm-proxy`(127.0.0.1:4010)+ `--base-url`,或在启动 shell 中显式 export |
+
+无凭证时 CLI 给出可操作提示而非静默失败。
+
 **与 Claude Code / OpenCode 搭配**:
 ```bash
 # Claude Code 产出的需求文档,管道传入审查

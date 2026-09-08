@@ -112,6 +112,7 @@
 - **默认模型**:通过 `litellm` 调用 `anthropic/claude-*` 模型(CLI `--model` 参数默认值)
 - **per-reviewer 覆盖**:reviewer YAML 可指定不同模型(如 Claude opus、GPT-4o),实现异构模型交叉验证(FR-2)
 - 不绑死单一供应商:默认是 Claude,但 reviewer 级别允许使用其他模型以形成交叉验证
+- **凭证继承(宿主会话)**: 系统作为被编码 agent 调用的质量关卡,LLM 凭证默认从宿主会话环境继承而非要求独立 API key。Claude Code: `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`(setup-token)自动继承,订阅登录凭证不可继承;OpenCode: 经本地网关(`--base-url`/`opencode-llm-proxy`)或启动 shell 显式 export。解析顺序:显式参数 > 环境变量 > litellm 内部回退
 - **不支持**作为 Claude Code skill 在会话内触发(见 design.md 1.5 节:仅 CLI 管道方式)
 
 ### FR-4: 置信度评分与人工升级

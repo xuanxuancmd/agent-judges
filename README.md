@@ -37,6 +37,46 @@ cp .env.sample .env
 
 默认模型为 `anthropic/claude-sonnet-4-20250514`（`--model` 可覆盖；`--base-url` 指向本地/代理网关）。通过 litellm 支持任意模型。
 
+## 从 Claude Code / OpenCode 中调用（凭证继承）
+
+`aj` 是被编码 agent 通过 shell 调用的质量关卡，**LLM 凭证优先从调用方会话环境继承**，解析顺序：显式参数 > 环境变量 > litellm 内部回退（见 `llm/credentials.py`）。
+
+### Claude Code
+
+| 会话认证方式 | aj 能否复用 | 说明 |
+|---|---|---|
+| `ANTHROPIC_API_KEY`（API key 认证） | ✅ 自动继承 | 子进程继承环境变量 |
+| `ANTHROPIC_AUTH_TOKEN`（网关/代理 Bearer） | ✅ 自动继承 | 同上 |
+| `claude setup-token` 导出 `CLAUDE_CODE_OAUTH_TOKEN` | ✅ 自动继承 | litellm 识别 `sk-ant-oat*` 前缀并走 Bearer + OAuth beta 头 |
+| Pro/Max 订阅登录（`/login`） | ❌ 不可复用 | OAuth 凭证存储在 `~/.claude/.credentials.json`，**不导出**到子进程环境；请改用 `claude setup-token` 或设置 `ANTHROPIC_API_KEY` |
+
+> 注意：宿主设置 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 时，所有凭证会从子进程环境中剥离，`aj` 无法继承——此时需在 `.env` 显式配置或经本地网关（`--base-url`）访问。
+
+```bash
+# Claude Code 会话内（bash 工具直接调用，凭证从会话环境继承）:
+aj review --file ./spec.md -r spec-reviewer -o json | jq .verdict.escalate_to_human
+```
+
+### OpenCode
+
+OpenCode 的 provider 凭证存储在 `~/.local/share/opencode/auth.json`，**不会**导出为子进程环境变量；官方 `opencode serve` 是管理 API，不是 Anthropic/OpenAI 线协议代理。两种接法：
+
+```bash
+# 方式 1（推荐）: 安装社区插件 opencode-llm-proxy
+# （本地 127.0.0.1:4010，Anthropic/OpenAI 线协议兼容，转发到 opencode 已配置的 provider）
+aj review --file ./spec.md --base-url http://127.0.0.1:4010
+
+# 方式 2: 在启动 opencode 的 shell 中显式 export provider key
+# （环境具有传递性：opencode 进程环境中有，其 bash 子进程就能看到）
+export ANTHROPIC_API_KEY="sk-ant-***"
+```
+
+### 解析顺序速查
+
+- `anthropic/*` 模型：`--base-url`/显式参数 > `ANTHROPIC_API_KEY` > `ANTHROPIC_AUTH_TOKEN` > `CLAUDE_CODE_OAUTH_TOKEN` >（网关）`ANTHROPIC_BASE_URL`
+- `openai/*` 模型：`OPENAI_API_KEY` / `OPENAI_BASE_URL`
+- 无凭证时 CLI 给出可操作提示（本地模型如 `ollama/*` 不误报）；`meta-reviewer-2`（GPT-4o）需要 `OPENAI_API_KEY`，缺失时该 reviewer 按容错策略降级，不影响整体产出
+
 ## 快速开始
 
 ```bash
