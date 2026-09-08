@@ -1,144 +1,244 @@
-<div align="center">
-<img src="assets/aaaj_logo_v7.png" alt="aaaj Logo" width="850" />
-</div>
+# adversarial-judge (aj)
 
+一个通用的、可外部定义 reviewer 与 skill 的、多 agent 辩论式的、置信度驱动人工升级的、且自身可递归审查的 AI 产出审计系统。
 
-[![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
-[![Paper](https://img.shields.io/badge/Paper-arXiv-red?style=flat-square&logo=arxiv)](https://arxiv.org/pdf/2410.10934)
-[![Dataset](https://img.shields.io/badge/Dataset-HuggingFace-yellow?style=flat-square&logo=huggingface)](https://huggingface.co/DEVAI-benchmark)
+> 受 [Agent-as-a-Judge](https://arxiv.org/pdf/2410.10934) (ICML 2025) 启发的重写。MIT 许可。
 
+## 这是什么
 
-> [!NOTE]
-> 📢 **Agent-as-a-Judge** is not only limited to the content of this repo, but a philosophy for judging agentic work and generating high-quality agentic datasets across domains.
->
-> 🔥 **Accepted at ICML 2025!**
->
-> 🔥 We build a Open-sourced DeepWiki (**OpenWiki**) which just add two codes in this repo (**following is a demo**).
->
+所有 AI 产出的东西（需求文档、规格、设计、代码、测试计划、检视报告…）都需要被另一个（组）AI **对抗审查**一遍——单 Agent 有幻觉、遗漏、过度自信等问题。本系统提供：
 
-> <div align="center" style="position: relative; width: 100%; overflow: hidden;">
->     <div style="display: flex; transition: transform 0.5s ease;">
->         <img src="assets/openwiki_1a.jpeg" alt="OpenWiki Architecture" style="min-width: 100%; object-fit: contain;" />
->         <img src="assets/openwiki_1b.jpeg" alt="OpenWiki Component" style="min-width: 100%; object-fit: contain;" />
->     </div>
-> </div>
+- **4 阶段辩论编排**：N 个 reviewer 独立评审（并行）→ 1-3 轮对抗辩论 → 盲评终判 → 裁决合成
+- **YAML 视角模板 + SKILL.md 审查 skill**：审查者与知识包均通过外部文件定义，无需改代码
+- **多模型混用**：不同 reviewer 可指定不同 LLM（Claude sonnet + opus + GPT-4o），避免同模型共享盲区
+- **置信度 + 人工升级**：`confidence < 阈值 → escalate_to_human: true`
+- **元审查**：审查结果本身可被再次审查，通过显式校准公式修正置信度
+- **auto 路由**：零参数调用，一次轻量 LLM 分类自动选档位与 reviewer 组合
 
+**不做什么**：代码风格、命名规范、设计模式、性能微优化（传统 code review 范畴）。但外部代码检视工具（SonarQube/ESLint/人工 review）的**产物**可以被本系统审查。
 
-## 🤠 Features
+## 安装
 
-Agent-as-a-Judge offers two key advantages:
-
-- **Automated Evaluation**: Agent-as-a-Judge can evaluate tasks during or after execution, saving 97.72% of time and 97.64% of costs compared to human experts.
-- **Provide Reward Signals**: It provides continuous, step-by-step feedback that can be used as reward signals for further agentic training and improvement.
-
-<div align="center">
-    <img src="assets/judge_first.png" alt="AaaJ" style="width: 95%; max-width: 650px;">
-</div>
-
-
-
-## 🎮 Quick Start 
-
-### 1. install
-
-```python
-git clone https://github.com/metauto-ai/agent-as-a-judge.git
-cd agent-as-a-judge/
-conda create -n aaaj python=3.11
-conda activate aaaj
+```bash
+git clone <repo>
+cd agent-judges
 pip install poetry
 poetry install
+# 或: pip install -e .
 ```
 
-
-### 2. set LLM&API
-
-Before running, rename `.env.sample` to `.env` and fill in the **required APIs and Settings** in the main repo folder to support LLM calling. The `LiteLLM` tool supports various LLMs.
+配置 API key（`.env.sample` → `.env`）：
 
 ```bash
 cp .env.sample .env
-# and then set the .env, please change accordingly, for example: 
-# OPENAI_API_KEY="sk-***"
-# ...
+# ANTHROPIC_API_KEY="sk-ant-***"
+# OPENAI_API_KEY="sk-***"     # meta-reviewer-2 默认用 GPT-4o
 ```
 
-### 3. run 
+默认模型为 `anthropic/claude-sonnet-4-20250514`（`--model` 可覆盖；`--base-url` 指向本地/代理网关）。通过 litellm 支持任意模型。
 
+## 快速开始
 
-<div align="center">
-    <img src="assets/demo.gif" alt="Demo GIF" style="width: 100%; max-width: 650px;">
-</div>
+```bash
+# 列出 20 个内置视角模板与 3 个内置 skill
+aj list-reviewers
+aj list-skills
 
-> [!TIP]
-> See more comprehensive [usage scripts](scripts/README.md).
->
+# 零决策全自动(推荐): auto 路由自动判定档位 + reviewer 组合
+aj review --file ./spec.md
 
+# 半决策: 显式选档
+aj review --file ./spec.md --profile fast      # 快检(1 次调用)
+aj review --file ./spec.md --profile standard  # 常规审查(2 reviewer + 1 轮辩论)
+aj review --file ./spec.md --profile thorough  # 深审(3 reviewer + 2 轮辩论 + 元审查)
 
-#### Usage A: **Ask Anything** for Any Workspace:
+# 全决策: 细粒度参数
+aj review --content "我们的系统需要支持高并发..." \
+  -r requirement-elicitation-reviewer \
+  -r spec-reviewer \
+  --debate-rounds 2 \
+  --threshold 0.8
 
-```python 
+# 即席加载 skill 为审查视角(通用匿名 agent 加载用户自定义 skill)
+aj review --file api-spec.md -r skill:api-contract-review
+aj review --file gateway-config.md -r skill:owasp-top10 --debate-rounds 0
 
-PYTHONPATH=. python scripts/run_ask.py \
-  --workspace $(pwd)/benchmark/workspaces/OpenHands/39_Drug_Response_Prediction_SVM_GDSC_ML \
-  --question "What does this workspace contain?"
+# 管道接入(Claude Code / OpenCode / CI)
+cat requirements.md | aj review -r requirement-elicitation-reviewer -o json | jq '.verdict.escalate_to_human'
+
+# 元审查: 审查上一轮的审查结果
+aj review --file verdict.json --meta-review -o json > meta_verdict.json
+
+# 双格式输出到目录
+aj review --file ./spec.md -r spec-reviewer --output both --output-dir ./reports
+
+# 预算控制 + 强制覆盖模型 + 本地网关(测试用)
+aj review --file ./spec.md -r spec-reviewer --override-model openai/gpt-4o --max-cost 0.50
+aj review --file ./spec.md -r spec-reviewer --base-url http://localhost:11434
+
+# 低置信度时暂停等待人工裁决
+aj review --file ./spec.md -r spec-reviewer --interactive
+
+# 置信度校准评估(验证"高置信度判断是否确实更准确": Accuracy/AUROC)
+aj evaluate --predictions verdicts.json --labels human_labels.json
 ```
 
-You can find an [example](assets/ask_sample.md) to see how **Ask Anything** works.
+## 三档 Profile
 
+| 档位 | reviewer 数 | 辩论轮 | 元审查 | LLM 调用数 | 适用场景 |
+|---|---|---|---|---|---|
+| **fast** | 1 | 0 | 否 | 1 | 短文本快检、CI 门禁、迭代内自检 |
+| **standard** | 2 | 1 | 否 | ~6 | 常规文档审查 |
+| **thorough** | 3 | 2 | 是 | ~15 | 关键交付物、终审 |
 
-#### Usage B: **Agent-as-a-Judge** for **DevAI**
+零参数时 auto 路由（一次轻量 LLM 分类，temp=0，可审计）自动选档；路由结果完整记录在 JSON verdict 的 `route` 字段中。
 
+## 输出
 
-```python
+`--output markdown`（默认）→ stdout 人类可读报告；`--output json` → stdout 机器可读 verdict；`--output both --output-dir DIR` → 写 `report.md` + `verdict.json` 两个文件。JSON **不输出到 stderr**（stderr 仅供日志）。
 
-PYTHONPATH=. python scripts/run_aaaj.py \
-  --developer_agent "OpenHands" \
-  --setting "black_box" \
-  --planning "efficient (no planning)" \
-  --benchmark_dir $(pwd)/benchmark
-```
+JSON verdict 核心字段：
 
-💡 There is an [example](assets/aaaj_sample.md) that shows the process of how **Agent-as-a-Judge** collects evidence for judging.
-
-####  Usage C: **OpenWiki** 🔥🔥🔥
-
-
-
-```python
-python scripts/run_wiki.py https://github.com/metauto-ai/GPTSwarm
-```
-
-
-## 🤗 DevAI Dataset 
-
-
-
-<div align="center">
-    <img src="assets/dataset.png" alt="Dataset" style="width: 100%; max-width: 600px;">
-</div>
-
-> [!IMPORTANT]
-> As a **proof-of-concept**, we applied **Agent-as-a-Judge** to code generation tasks using **DevAI**, a benchmark consisting of 55 realistic AI development tasks with 365 hierarchical user requirements. The results demonstrate that **Agent-as-a-Judge** significantly outperforms traditional evaluation methods, delivering reliable reward signals for scalable self-improvement in agentic systems.
-> 
-> Check out the dataset on [Hugging Face 🤗](https://huggingface.co/DEVAI-benchmark).
-> See how to use this dataset in the [guidelines](benchmark/devai/README.md).
-
-
-<!-- <div align="center">
-    <img src="assets/sample.jpeg" alt="Sample" style="width: 100%; max-width: 600px;">
-</div> -->
-
-## Reference
-
-Feel free to cite if you find the Agent-as-a-Judge concept useful for your work:
-
-```
-@article{zhuge2024agent,
-  title={Agent-as-a-Judge: Evaluate Agents with Agents},
-  author={Zhuge, Mingchen and Zhao, Changsheng and Ashley, Dylan and Wang, Wenyi and Khizbullin, Dmitrii and Xiong, Yunyang and Liu, Zechun and Chang, Ernie and Krishnamoorthi, Raghuraman and Tian, Yuandong and Shi, Yangyang and Chandra, Vikas and Schmidhuber, J{\"u}rgen},
-  journal={arXiv preprint arXiv:2410.10934},
-  year={2024}
+```json
+{
+  "verdict": {
+    "severity": "major",
+    "confidence": 0.65,
+    "calibrated_confidence": 0.455,
+    "escalate_to_human": true,
+    "findings": [
+      {"description": "...", "severity": "major", "confidence": 0.72,
+       "evidence": "原文引用", "suggestion": "改进建议"}
+    ]
+  },
+  "route": {"profile": "standard", "reviewer_names": ["..."], "reason": "..."},
+  "consensus_score": 0.75,
+  "stability_score": 1.0,
+  "meta_review": {},
+  "cost": {"total_tokens": 15420, "total_cost_usd": 0.12}
 }
 ```
 
+字段说明：`severity` 为枚举（critical > major > minor > pass，显式排序，避免字符串比较错误）；`consensus_score` 是 reviewer 间一致度（非聚合置信度）；`stability_score` 是辩论前后立场稳定性；`calibrated_confidence` 是元审查校准后的置信度（升级判定优先使用）。
 
+## 自定义审查视角模板
+
+系统采用**匿名槽位 + 视角注入**约束模型：你只能注入"审查视角"（persona + checklist），不能自定义辩论行为、输出格式、流程编排——这些由系统固定控制（保证辩论流程兼容）。
+
+复制 `reviewers/custom_example.yaml` 为新文件，修改后即可使用：
+
+```yaml
+name: my-security-auditor        # 唯一标识(slug)
+description: 安全审计视角
+# model: anthropic/claude-opus-4-20250514   # 可选,不指定用 --model 默认值
+system_prompt: |                 # 审查者人设 + 关注维度
+  你是一位安全审计专家……
+checklist:                       # 检查清单
+  - criteria: 认证与授权路径完整
+skills:                          # 可选:引用审查 skill(知识注入)
+  - owasp-top10
+weight: 1.0                      # 聚合权重
+majority_vote: 1                 # >1 时同模型多次调用投票(轻量级反幻觉)
+```
+
+```bash
+aj review --file doc.md -r my-security-auditor
+```
+
+## 自定义审查 skill
+
+skill 是**知识注入型**的用户自定义审查知识包（SKILL.md 格式，兼容业界 skill 约定；纯 LLM 范式——不含工具执行）。由通用匿名 agent 槽位加载，两种方式：
+
+**方式 1：即席加载**（skill = 完整审查视角）：
+
+```bash
+aj review --file api-spec.md -r skill:api-contract-review
+```
+
+**方式 2：模板引用**（skill = reviewer 的知识扩展）：见上节 `skills:` 字段。内置示例：`dangerous-operation-scanner` 模板引用 `dangerous-operations` skill（模式清单独立维护，模板只保留 persona）。
+
+skill 文件格式（两种布局：`skills/<name>/SKILL.md` 或 `skills/<name>.md`）：
+
+```markdown
+---
+name: my-compliance-skill
+description: 金融合规审查知识包
+checklist:            # 可选:即席加载时作为检查清单
+  - criteria: "敏感数据分类分级已落实"
+---
+
+# 审查知识正文
+
+(领域 rubric、模式清单、定级基准、few-shot 示例……)
+```
+
+```bash
+aj list-skills                        # 查看可用 skill
+aj review --file x.md -r skill:my-compliance-skill --debate-rounds 0
+```
+
+### 内置视角模板（20 个）
+
+| 模板 | 覆盖场景 |
+|---|---|
+| `requirement-elicitation-reviewer` | 需求收集 |
+| `requirement-clarification-reviewer` | 需求澄清（歧义消除、假设记录） |
+| `requirement-decomposition-reviewer` | 需求分解（MECE） |
+| `requirement-prioritization-reviewer` | 需求优先级（MoSCoW） |
+| `requirement-acceptance-reviewer` | 验收标准（可测试性） |
+| `spec-reviewer` | 规格文档 |
+| `design-reviewer` | 设计文档（opus） |
+| `implementation-vs-requirement-reviewer` | 实现对照需求 |
+| `unit-test-reviewer` | 单元测试 |
+| `integration-test-reviewer` | 集成测试 |
+| `test-plan-reviewer` | 测试计划 |
+| `deployment-config-reviewer` | 部署配置（Dockerfile/IaC） |
+| `documentation-reviewer` | 文档（API 文档/README） |
+| `external-code-review-auditor` | 外部代码检视报告审查 |
+| `process-compliance-reviewer` | 过程合规（agent 日志） |
+| `deception-detector` | 欺骗检测（claim vs 证据） |
+| `dangerous-operation-scanner` | 危险操作扫描（引用 skill） |
+| `meta-reviewer` / `meta-reviewer-2` | 元审查（Claude + GPT-4o 异构对抗） |
+| `custom_example.yaml` | 自定义模板示例（含字段说明） |
+
+### 内置 skill（3 个）
+
+| skill | 用途 |
+|---|---|
+| `dangerous-operations` | 危险操作正则模式清单 + 语义判定指引（被模板引用） |
+| `owasp-top10` | OWASP Top 10 安全审查知识包（含 checklist，可即席加载） |
+| `api-contract-review` | API 契约完整性审查（平铺式示例） |
+
+## 开发
+
+```bash
+# 单元测试(mock LLM,不耗 token)
+pytest tests/ -m "not integration" -v
+
+# 类型检查
+mypy src/adversarial_judge
+
+# 集成测试(需真实 API key)
+pytest tests/test_integration.py -m integration -v
+```
+
+## 架构
+
+```
+CLI (aj review / list-reviewers / list-skills / evaluate)
+  └─ 三层决策: 细粒度参数 > --profile > auto 路由(L1, 一次轻量 LLM 分类)
+      └─ DebateOrchestrator (4 阶段, L0 确定性规则)
+          ├─ Phase 1: 独立评审(并行 ThreadPoolExecutor, 超长输入 token 截断保护)
+          ├─ Phase 2: 对抗辩论(≥2 reviewer 才开,每轮前查预算)
+          ├─ Phase 3: 盲评终判(并行;单 reviewer 快检形态跳过)
+          └─ Phase 4: 裁决合成(Severity.rank 最严 + 加权置信度)
+              ├─ ReviewerRegistry   (YAML 视角模板 → 匿名槽位)
+              ├─ SkillRegistry      (SKILL.md 知识包: 模板引用 / skill: 即席加载)
+              ├─ LLMBroker          (多模型管理 + 缓存 + 预算控制)
+              ├─ EscalationRouter   (置信度 < 阈值 → 人工升级)
+              └─ MetaReviewer       (可选,复用主链路 + 显式校准公式)
+```
+
+verdict 解析降级链：`complete_json`（litellm tool-use → response_format → prompt 注入 + JSON 正则，严格 schema 校验）→ `<SATISFIED>` 标签降级（AaaJ 原方案，同响应零额外调用，confidence 封顶 0.5）。
+
+设计文档：[docs/spec.md](docs/spec.md) · [docs/design.md](docs/design.md) · [docs/plan.md](docs/plan.md)
