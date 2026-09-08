@@ -176,3 +176,8 @@ Dockerfile
 
 # Ignore all judge files
 */judge/
+# adversarial-judge outputs and local tool dirs
+reports/
+.omo/
+.codegraph/
+
