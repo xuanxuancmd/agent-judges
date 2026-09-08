@@ -21,7 +21,12 @@ from typer.testing import CliRunner
 from adversarial_judge.cli import app
 from conftest import REVIEWERS_DIR
 
-_HOST_LLM_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY")
+_HOST_LLM_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",  # claude setup-token sessions (sk-ant-oat*)
+    "OPENAI_API_KEY",
+)
 
 pytestmark = [
     pytest.mark.integration,
