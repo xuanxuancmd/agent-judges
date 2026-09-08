@@ -1,5 +1,6 @@
-"""``aj list-reviewers`` / ``aj list-skills`` — inspect available templates
-and skill packages.
+"""``aj list-reviewers`` / ``aj list-skills`` / ``aj inspect-reviewer`` —
+inspect available templates, skill packages, and the fully assembled
+anonymous-agent prompt.
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import typer
 
+from ..prompts.judge_system import build_system_prompt
 from ..reviewer import ReviewerRegistry
 from ..skill import SkillRegistry
 from . import app
@@ -63,3 +65,42 @@ def list_skills(
         "\n用法: aj review -r skill:<name> 直接加载,或在 reviewer YAML 中通过"
         " skills: [<name>] 引用"
     )
+
+
+@app.command("inspect-reviewer")
+def inspect_reviewer(
+    name: str = typer.Argument(
+        ..., help="reviewer 名称(支持 skill:<name> 即席形式)"
+    ),
+    reviewers_dir: Path = typer.Option(
+        Path("reviewers"), "--reviewers-dir", help="reviewer 定义目录"
+    ),
+    skills_dir: Path | None = typer.Option(
+        None, "--skills-dir", help="审查 skill 目录(默认: ./skills 若存在)"
+    ),
+):
+    """显示匿名 agent 的完整组装提示词(persona + 已拉起的 skill + 审查框架)
+
+    用于验证 reviewer YAML 引用的 skill 是否被正确注入到匿名槽位。
+    """
+    try:
+        registry = ReviewerRegistry(
+            reviewers_dir, skills_dir=_resolve_skills_dir(skills_dir)
+        )
+    except (FileNotFoundError, ValueError) as e:
+        _echo_err(f"Error: {e}")
+        raise typer.Exit(1) from e
+    try:
+        config = registry.get(name)
+    except KeyError as e:
+        _echo_err(f"Error: {e}")
+        raise typer.Exit(1) from e
+
+    typer.echo(f"# reviewer : {config.name}")
+    typer.echo(f"# model    : {config.model or '(CLI --model 默认)'}")
+    typer.echo(f"# skills   : {', '.join(config.skills) if config.skills else '(无)'}")
+    typer.echo(f"# checklist:")
+    for item in config.checklist:
+        typer.echo(f"#   - {item.criteria}")
+    typer.echo("")
+    typer.echo(build_system_prompt(config.system_prompt))

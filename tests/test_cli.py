@@ -406,6 +406,48 @@ class TestSkillsCli:
         assert "owasp-top10" in result.output
         assert "api-contract-review" in result.output
 
+    def test_inspect_reviewer_shows_skill_pullup(self):
+        # Q1 verification: the skill IS pulled into the anonymous agent
+        result = runner.invoke(
+            app,
+            [
+                "inspect-reviewer", "dangerous-operation-scanner",
+                "--reviewers-dir", str(REVIEWERS_DIR),
+                "--skills-dir", str(SKILLS_DIR),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        out = result.output
+        assert "# skills   : dangerous-operations" in out
+        assert "## skill: dangerous-operations" in out  # skill body injected
+        assert "危险操作模式清单" in out  # the skill's knowledge content
+        assert "[审查框架" in out  # anonymous-slot judge frame appended
+        assert "识别" in out  # persona preserved
+
+    def test_inspect_reviewer_skill_prefix(self):
+        result = runner.invoke(
+            app,
+            [
+                "inspect-reviewer", "skill:owasp-top10",
+                "--reviewers-dir", str(REVIEWERS_DIR),
+                "--skills-dir", str(SKILLS_DIR),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "# reviewer : skill-owasp-top10" in result.output
+        assert "OWASP Top 10 (2021) 审查指引" in result.output
+
+    def test_inspect_reviewer_unknown_errors(self):
+        result = runner.invoke(
+            app,
+            [
+                "inspect-reviewer", "ghost",
+                "--reviewers-dir", str(REVIEWERS_DIR),
+                "--skills-dir", str(SKILLS_DIR),
+            ],
+        )
+        assert result.exit_code == 1
+
     def test_skill_as_adhoc_reviewer_end_to_end(self, install_mock_broker):
         # "通用的匿名 agent 加载用户自定义的 skill" — -r skill:<name>
         install_mock_broker(MockLLM(responses=_base_responses()))
@@ -468,6 +510,66 @@ class TestBaseUrl:
         )
         assert result.exit_code == 0, result.output
         assert captured["default_base_url"] == "http://localhost:11434"
+
+
+class TestCredentialHint:
+    _CRED_VARS = (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "OPENAI_API_KEY",
+    )
+
+    def _clear_creds(self, monkeypatch):
+        for var in self._CRED_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    def _invoke(self, install_mock_broker):
+        install_mock_broker(MockLLM(responses=_base_responses()))
+        return runner.invoke(
+            app,
+            [
+                "review", "--content", "凭证提示测试",
+                "-r", "spec-reviewer",
+                "--debate-rounds", "0",
+                "--review-depth", "0",
+                "--reviewers-dir", str(REVIEWERS_DIR),
+                "-o", "json",
+            ],
+        )
+
+    def test_warns_without_credentials(self, monkeypatch, install_mock_broker):
+        self._clear_creds(monkeypatch)
+        result = self._invoke(install_mock_broker)
+        assert result.exit_code == 0, result.output
+        assert "未检测到" in result.stderr
+        assert "凭证" in result.stderr
+
+    def test_no_warning_with_host_credentials(self, monkeypatch, install_mock_broker):
+        self._clear_creds(monkeypatch)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-session")
+        result = self._invoke(install_mock_broker)
+        assert result.exit_code == 0, result.output
+        assert "未检测到" not in result.stderr
+
+    def test_no_warning_for_local_model(self, monkeypatch, install_mock_broker):
+        for var in self._CRED_VARS:
+            monkeypatch.delenv(var, raising=False)
+        install_mock_broker(MockLLM(responses=_base_responses()))
+        result = runner.invoke(
+            app,
+            [
+                "review", "--content", "本地模型",
+                "-r", "spec-reviewer",
+                "--debate-rounds", "0",
+                "--review-depth", "0",
+                "--reviewers-dir", str(REVIEWERS_DIR),
+                "--model", "ollama/llama3",
+                "-o", "json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "未检测到" not in result.stderr  # local models need no key
 
 
 class TestReviewDepthTwo:
