@@ -194,6 +194,27 @@
   .eb { color: #e89a8e; font-weight: 600; }
   .ec { color: #6e6e64; }
 
+  /* ---------- flowchart ---------- */
+  .fc-wrap { overflow-x: auto; margin-top: 4px; }
+  .fc-wrap svg { display: block; width: 100%; max-width: 640px; min-width: 520px; height: auto; margin: 0 auto; }
+  .fc-note { font-size: 13px; line-height: 1.85; color: var(--ink-2); max-width: 860px; margin-top: 14px; }
+  .fc-box { fill: var(--paper); stroke: var(--ink); stroke-width: 1; }
+  .fc-strong { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+  .fc-gate { fill: var(--paper); stroke: var(--seal); stroke-width: 1.5; }
+  .fc-tag { fill: var(--seal-soft); stroke: var(--seal); stroke-width: 1; }
+  .fc-edge { stroke: var(--ink-2); stroke-width: 1.2; fill: none; }
+  .fc-title { font-family: var(--sans); font-size: 15px; font-weight: 700; fill: var(--ink); }
+  .fc-title-s { font-family: var(--sans); font-size: 13px; font-weight: 700; fill: var(--ink); }
+  .fc-sub { font-family: var(--mono); font-size: 10.5px; font-weight: 500; fill: var(--ink-3); }
+  .fc-gtitle { font-family: var(--sans); font-size: 14px; font-weight: 700; fill: var(--ink); }
+  .fc-gsub { font-family: var(--sans); font-size: 11px; fill: var(--ink-2); }
+  .fc-lab { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: var(--ink-2); paint-order: stroke; stroke: var(--paper); stroke-width: 3px; }
+  .fc-lab-seal { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: var(--seal); paint-order: stroke; stroke: var(--paper); stroke-width: 3px; }
+  .fc-phase { font-family: var(--mono); font-size: 12px; font-weight: 700; fill: var(--seal); }
+  .fc-phase-sub { font-family: var(--mono); font-size: 10px; font-weight: 500; fill: var(--ink-3); }
+  .fc-seal { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: var(--seal); }
+  .fc-dot { fill: var(--ink-3); }
+
   /* ---------- definition rows ---------- */
   .defs { border-top: 2px solid var(--ink); }
   .def {
@@ -263,6 +284,7 @@
           <dt>形态</dt><dd>CLI + 宿主 Agent</dd>
           <dt>面板</dt><dd>异构多模型</dd>
           <dt>扩展</dt><dd>MD 模板 + SKILL.md</dd>
+          <dt>输入</dt><dd>文件 · 文本 · 管道</dd>
           <dt>依赖</dt><dd>轻量(litellm 等)</dd>
           <dt>许可</dt><dd>MIT</dd>
           <dt>渊源</dt><dd>AaaJ · ICML 2025</dd>
@@ -283,7 +305,7 @@
           立项前提为:<strong>单 agent 审查不可靠</strong>——幻觉、遗漏、过度自信是其结构性缺陷。
           系统的全部设计,均由这一前推导出。
         </p>
-        <p class="kw">关键词:对抗审查 · 确定性编排 · 渐进门控 · 元审查校准 · 置信度升级</p>
+        <p class="kw">关键词:对抗审查 · 确定性编排 · 渐进门控 · 主动验证 · 元审查校准 · 置信度升级</p>
       </section>
 
       <section class="article" id="s1">
@@ -342,70 +364,128 @@
           <span class="art-no">第二条</span>
           <h2>流程</h2>
         </div>
-        <p class="article-lede">零参数调用时的完整程序:两道纯规则门 + 四阶段辩论 + 可选元审查。</p>
+        <p class="article-lede">零参数调用时的完整程序:两道纯规则门 + 图谱证据收集 + 四阶段辩论 + 可选元审查。</p>
 
-        <p class="sub-h">2.1 渐进式门控 · 纯规则,零 LLM 预分类</p>
-        <div class="tbl-wrap">
-          <table class="tbl">
-            <thead>
-              <tr><th>步骤</th><th>程序</th><th>判定规则</th></tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>S1</td>
-                <td><strong>哨兵先行</strong>:短文(&lt; 8k token)派 1 名哨兵独立评审;长文直接 3 人面板</td>
-                <td>由 token 计数决定,无 LLM 参与</td>
-              </tr>
-              <tr>
-                <td>G1</td>
-                <td><strong>门一 · 早停判定</strong></td>
-                <td>哨兵未发现 major 且置信 ≥ 0.9 → 判定"简单",直接输出;否则扩张</td>
-              </tr>
-              <tr>
-                <td>S2</td>
-                <td><strong>面板扩张</strong>:哨兵 verdict 保留,补足至 3 人并行独立评审</td>
-                <td>不重复计算已花掉的调用</td>
-              </tr>
-              <tr>
-                <td>G2</td>
-                <td><strong>门二 · 续跑强度</strong></td>
-                <td>发现 critical 或加权置信偏低 → thorough 续跑;其余 → standard 续跑</td>
-              </tr>
-              <tr>
-                <td>END</td>
-                <td><strong>终态</strong>:按选定强度完成四阶段辩论,产出 verdict 与报告</td>
-                <td>完整路径记录于 <span class="m">route</span> 字段,可复盘</td>
-              </tr>
-            </tbody>
-          </table>
+        <p class="sub-h">2.1 端到端流程 · 两道门 × 四阶段</p>
+        <div class="fc-wrap">
+          <svg viewBox="0 0 640 950" role="img" aria-label="agent-judges 端到端审查流程图:输入经哨兵先行与早停门,进入 reviewer 并行独立评审,对抗辩论,盲评终判,裁决合成,经续跑强度门决定是否元审查,输出 verdict 与报告,低置信时人工升级" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="fcArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 Z" fill="#55554f"></path>
+              </marker>
+            </defs>
+
+            <rect class="fc-box" x="190" y="24" width="260" height="46"></rect>
+            <text class="fc-title" x="320" y="44" text-anchor="middle">输入</text>
+            <text class="fc-sub" x="320" y="61" text-anchor="middle">文件 / 文本 / 管道</text>
+
+            <line class="fc-edge" x1="320" y1="70" x2="320" y2="96" marker-end="url(#fcArr)"></line>
+
+            <rect class="fc-box" x="190" y="98" width="260" height="48"></rect>
+            <text class="fc-title" x="320" y="119" text-anchor="middle">哨兵先行</text>
+            <text class="fc-sub" x="320" y="136" text-anchor="middle">短文派 1 人 · 长文直接 3 人面板</text>
+
+            <line class="fc-edge" x1="320" y1="146" x2="320" y2="164" marker-end="url(#fcArr)"></line>
+
+            <polygon class="fc-gate" points="320,166 450,222 320,278 190,222"></polygon>
+            <text class="fc-gtitle" x="320" y="216" text-anchor="middle">G1 · 早停门</text>
+            <text class="fc-gsub" x="320" y="234" text-anchor="middle">无 major 且置信 ≥ 0.9?</text>
+
+            <line class="fc-edge" x1="450" y1="222" x2="476" y2="222" marker-end="url(#fcArr)"></line>
+            <text class="fc-lab-seal" x="462" y="212" text-anchor="middle">是</text>
+            <rect class="fc-box" x="478" y="200" width="152" height="44"></rect>
+            <text class="fc-title-s" x="554" y="220" text-anchor="middle">直接输出 verdict</text>
+            <text class="fc-sub" x="554" y="237" text-anchor="middle">早停 · 仅 1 次调用</text>
+
+            <line class="fc-edge" x1="320" y1="278" x2="320" y2="330" marker-end="url(#fcArr)"></line>
+            <text class="fc-lab" x="330" y="304" text-anchor="start">否</text>
+
+            <line class="fc-edge" x1="235" y1="330" x2="405" y2="330"></line>
+            <line class="fc-edge" x1="235" y1="330" x2="235" y2="346" marker-end="url(#fcArr)"></line>
+            <line class="fc-edge" x1="405" y1="330" x2="405" y2="346" marker-end="url(#fcArr)"></line>
+
+            <text class="fc-phase" x="162" y="364" text-anchor="end">P1</text>
+            <text class="fc-phase-sub" x="162" y="378" text-anchor="end">独立评审</text>
+            <rect class="fc-box" x="170" y="348" width="130" height="44"></rect>
+            <text class="fc-title-s" x="235" y="367" text-anchor="middle">reviewer 1</text>
+            <text class="fc-sub" x="235" y="383" text-anchor="middle">claude</text>
+            <rect class="fc-box" x="340" y="348" width="130" height="44"></rect>
+            <text class="fc-title-s" x="405" y="367" text-anchor="middle">reviewer 2</text>
+            <text class="fc-sub" x="405" y="383" text-anchor="middle">gpt-4o</text>
+            <circle class="fc-dot" cx="492" cy="370" r="3"></circle>
+            <circle class="fc-dot" cx="504" cy="370" r="3"></circle>
+            <circle class="fc-dot" cx="516" cy="370" r="3"></circle>
+
+            <line class="fc-edge" x1="235" y1="392" x2="235" y2="410"></line>
+            <line class="fc-edge" x1="405" y1="392" x2="405" y2="410"></line>
+            <line class="fc-edge" x1="235" y1="410" x2="405" y2="410"></line>
+            <line class="fc-edge" x1="320" y1="410" x2="320" y2="426" marker-end="url(#fcArr)"></line>
+
+            <text class="fc-phase" x="162" y="456" text-anchor="end">P2</text>
+            <rect class="fc-box" x="180" y="428" width="280" height="48"></rect>
+            <text class="fc-title" x="320" y="449" text-anchor="middle">对抗辩论</text>
+            <text class="fc-sub" x="320" y="466" text-anchor="middle">阅他人观点逐条反驳 · 1–3 轮</text>
+
+            <line class="fc-edge" x1="320" y1="476" x2="320" y2="500" marker-end="url(#fcArr)"></line>
+
+            <text class="fc-phase" x="162" y="530" text-anchor="end">P3</text>
+            <rect class="fc-box" x="180" y="502" width="280" height="48"></rect>
+            <text class="fc-title" x="320" y="523" text-anchor="middle">盲评终判</text>
+            <text class="fc-sub" x="320" y="540" text-anchor="middle">辩论后独立终判 · 互不可见</text>
+
+            <line class="fc-edge" x1="320" y1="550" x2="320" y2="574" marker-end="url(#fcArr)"></line>
+
+            <text class="fc-phase" x="162" y="604" text-anchor="end">P4</text>
+            <rect class="fc-box" x="180" y="576" width="280" height="48"></rect>
+            <text class="fc-title" x="320" y="597" text-anchor="middle">裁决合成</text>
+            <text class="fc-sub" x="320" y="614" text-anchor="middle">severity 取最严 · 置信度加权</text>
+
+            <line class="fc-edge" x1="320" y1="624" x2="320" y2="650" marker-end="url(#fcArr)"></line>
+
+            <polygon class="fc-gate" points="320,652 450,708 320,764 190,708"></polygon>
+            <text class="fc-gtitle" x="320" y="702" text-anchor="middle">G2 · 续跑强度门</text>
+            <text class="fc-gsub" x="320" y="720" text-anchor="middle">critical / 加权置信偏低?</text>
+
+            <line class="fc-edge" x1="450" y1="708" x2="476" y2="708" marker-end="url(#fcArr)"></line>
+            <text class="fc-lab-seal" x="462" y="698" text-anchor="middle">深审</text>
+            <rect class="fc-box" x="478" y="686" width="152" height="44"></rect>
+            <text class="fc-title-s" x="554" y="706" text-anchor="middle">元审查 + 校准</text>
+            <text class="fc-sub" x="554" y="723" text-anchor="middle">≥2 meta-reviewer</text>
+            <path class="fc-edge" d="M 554 730 L 554 866 L 462 866" marker-end="url(#fcArr)"></path>
+
+            <line class="fc-edge" x1="320" y1="764" x2="320" y2="838" marker-end="url(#fcArr)"></line>
+            <text class="fc-lab" x="330" y="804" text-anchor="start">常规</text>
+
+            <rect class="fc-strong" x="180" y="840" width="280" height="54"></rect>
+            <text class="fc-title" x="320" y="863" text-anchor="middle">输出 verdict + 报告</text>
+            <text class="fc-sub" x="320" y="881" text-anchor="middle">route 字段 · 全程可复盘</text>
+
+            <line class="fc-edge" x1="320" y1="894" x2="320" y2="908" marker-end="url(#fcArr)"></line>
+
+            <rect class="fc-tag" x="170" y="910" width="300" height="30"></rect>
+            <text class="fc-seal" x="320" y="929" text-anchor="middle">置信 &lt; 阈值 → escalate_to_human 人工升级</text>
+          </svg>
         </div>
+        <p class="fc-note">两道门均为<strong>纯规则门</strong>,零 LLM 预分类:G1 决定早停;G2 依据 Phase 1 实测信号(severity / 置信 / 共识)决定续跑强度——<span class="m">standard</span>(1 轮辩论)或 <span class="m">thorough</span>(2 轮辩论 + 元审查)。哨兵结论保留计入面板;完整路径记录于 verdict 的 route 字段,可复盘。</p>
 
-        <p class="sub-h">2.2 四阶段辩论</p>
+        <p class="sub-h">2.2 主动验证 · 图谱证据收集(审查代码类产出时)</p>
         <div class="tbl-wrap">
           <table class="tbl">
             <thead>
-              <tr><th>阶段</th><th>程序</th><th>约束</th></tr>
+              <tr><th>环节</th><th>程序</th></tr>
             </thead>
             <tbody>
               <tr>
-                <td>P1</td>
-                <td><strong>独立评审</strong>:N 名 reviewer 并行评审,互不可见</td>
-                <td>单个 reviewer 失败降级为低置信 verdict,不击溃整批;超长输入截断保护</td>
+                <td>收集</td>
+                <td>引擎在调用 reviewer 前,自动从本地 <strong>graphify 代码知识图谱</strong>提取结构证据——<strong>调用链、依赖关系、跨文件引用</strong>——注入 reviewer prompt 的 context</td>
               </tr>
               <tr>
-                <td>P2</td>
-                <td><strong>对抗辩论</strong>:各 reviewer 阅他人观点后逐条反驳</td>
-                <td>≥2 名 reviewer 方开启;1–3 轮,每轮前检查预算</td>
+                <td>验证</td>
+                <td>reviewer 仍为纯 LLM,但每条 finding 可<strong>对照代码实际结构验证</strong>:"需求遗漏了 X"的判断有事实依据,而非仅凭模型记忆</td>
               </tr>
               <tr>
-                <td>P3</td>
-                <td><strong>盲评终判</strong>:辩论后各自独立给出终判</td>
-                <td>终判互不可见,防从众;单 reviewer 快检自动跳过</td>
-              </tr>
-              <tr>
-                <td>P4</td>
-                <td><strong>裁决合成</strong>:severity 取最严;置信度按权重加权</td>
-                <td>产出 consensus(一致度)与 stability(立场稳定性)评分</td>
+                <td>边界</td>
+                <td>以预构建图谱<strong>替代 AaaJ 的 tree-sitter / BM25 / embedding 工具层</strong>,无需自建;图谱不存在时静默降级为纯 LLM 模式,不阻断主流程</td>
               </tr>
             </tbody>
           </table>
@@ -490,8 +570,8 @@
             <p>verdict 序列化后可再次作为输入被审查,深度上限 2——"审查者不可靠"的主张对系统自身同样成立。</p>
           </div>
           <div class="def">
-            <div class="d-t">证据注入<span>EVIDENCE INJECTION</span></div>
-            <p>审查代码类产出时,可选注入本地 graphify 代码图谱证据(调用链、依赖关系);图谱不存在时静默降级为纯 LLM 模式。</p>
+            <div class="d-t">主动验证 · 图谱证据<span>ACTIVE VERIFICATION</span></div>
+            <p>reviewer 不调工具,但引擎为其预先收集代码结构证据,使每条 finding 可对照代码实际结构验证(见 2.2);以预构建图谱替代 AaaJ 工具层,无需自建。</p>
           </div>
         </div>
       </section>
