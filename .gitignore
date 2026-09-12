@@ -35,6 +35,7 @@ MANIFEST
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+.playwright-mcp
 
 # Unit test / coverage reports
 htmlcov/
@@ -181,3 +182,4 @@ reports/
 .omo/
 .codegraph/
 
+.agent-judges/

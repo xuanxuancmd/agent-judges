@@ -6,7 +6,7 @@
 
 ### 1.1 问题陈述
 
-当前 AI Agent 在软件开发各环节(需求分析、规格定义、设计、实现、测试计划等)产出大量内容,但**单 Agent 不可靠**——存在幻觉、遗漏、自洽性偏差、过度自信等问题，人类逐项审查心智负担重。
+当前 AI Agent 在软件开发各环节(需求分析、规格定义、设计、实现、测试计划等)产出大量内容,但**单 Agent 不可靠**——存在幻觉、遗漏、自洽性偏差、过度自信等问题,人类逐项审查心智负担重。
 
 ### 1.2 核心立场
 
@@ -17,6 +17,10 @@
 - 现有工具(Claude Code、Codex 等)内置的 review 能力是**单 agent、单视角**的,不可靠
 - 需要一个**通用、可配置、可对抗**的审查层,横跨 AI 介入的所有环节
 - 审查结果本身也是 AI 产出,**同样不可靠**,需要可被再次审查(元审查)
+
+### 1.4 宿主集成立场
+
+系统以**宿主 agent 生态成员**形态交付:入口为宿主内 `judge-manager` 实体 Agent,reviewer 为宿主实体 Agent,LLM 能力(模型/凭证/额度)全部来自宿主已有配置——用户零模型配置。主路径对宿主的依赖仅限三项公共能力(Agent 定义文件 / 原生 subagent 拉起 / shell),**不引入宿主专有的 headless CLI**(详见 FR-3/FR-5/FR-10/FR-11 与 NFR-7)。
 
 ---
 
@@ -71,7 +75,109 @@
 
 ---
 
-## 3. 功能性需求
+## 3. 对外竞争力关键技术点
+
+| # | 技术点 | 说明 |
+|---|---|---|
+| 1 | **多 agent 辩论式审查** | 4 阶段流程(独立评审→对抗辩论→盲评终判→裁决合成),reviewer 之间互相挑战而非各自孤立判断,避免单 agent 的过度自信 |
+| 2 | **异构 reviewer 面板** | 不同角色不同模型(如 Claude sonnet + opus + GPT-4o)形成对抗,避免同模型共享盲区。模型配置写在 reviewer 定义的 frontmatter 中 |
+| 3 | **渐进式门控** | 哨兵先行 + 结果驱动门控,零 LLM 预分类。流程强度由 Phase 1 实测信号(severity/confidence/共识)决定,而非入口处的复杂度预测 |
+| 4 | **元审查 + 显式校准公式** | 审查结果本身可被审查。至少 2 个 meta-reviewer 对抗审查,通过显式公式校准置信度,而非简单覆盖 |
+| 5 | **置信度驱动人工升级** | 每条 finding 和整体 verdict 都有量化置信度,低于阈值自动标记 `escalate_to_human` |
+| 6 | **外部定义 reviewer + skill 知识包** | reviewer 用 Markdown frontmatter + persona 正文定义,skill 用 SKILL.md 格式定义,均无需改代码。匿名槽位 + 视角注入约束模型 |
+| 7 | **宿主零配置** | judge-manager Agent + 实体 reviewer Agent,LLM 模型/凭证/额度全部来自宿主已有配置,用户零模型配置、零 API key |
+| 8 | **自身可递归审查** | Verdict 序列化为文本后可作为输入再次审查,`--review-depth` 控制递归深度(硬上限 2) |
+| 9 | **通用管道接入** | 任意文本产出物,三种输入方式(`--content` / `--file` / stdin 管道)。不依赖文件系统路径或特定数据结构 |
+| 10 | **纯 LLM 范式 + 可选证据注入** | 轻依赖(litellm/pydantic/typer/yaml),不绑代码 workspace。reviewer 不执行工具,但审查代码产出物时可通过 graphify 图谱证据注入获得代码结构上下文。graphify 不存在时静默降级为纯 LLM 模式 |
+| 11 | **主动验证(graphify 证据注入)** | 审查代码产出物时,引擎在调 reviewer 前自动从本地 graphify 知识图谱收集代码结构证据(调用链、依赖关系、跨文件引用),注入 reviewer prompt 的 context 部分。reviewer 仍为纯 LLM,但 prompt 里多了代码结构证据,能验证 finding 是否与代码实际结构一致。替代 AaaJ 的 tree-sitter/BM25/embedding 工具层,无需自建 |
+
+---
+
+## 4. 核心审查流程（外部视角）
+
+### 4.1 零参数 auto 流程
+
+零参数调用时,系统不做先验复杂度分类,而是**哨兵先行 + 结果驱动门控**:
+
+1. **起跑**:对全文做 token 计数。短内容(< 8000 token)派 1 名哨兵先行;长内容直接派 3 人面板
+2. **哨兵独立评审**:哨兵 reviewer 独立审查,产出第一份 verdict
+3. **门 1(早停判定)**:如果哨兵未发现 major 及以上问题且置信度足够高(≥ 0.9),判定为"简单",直接合成输出,结束。否则进入下一步
+4. **面板扩张**:哨兵 verdict 保留(不重复计算),补足到 3 人并行独立评审
+5. **门 2(续跑强度)**:根据实测信号选择续跑强度。发现 critical 问题或加权置信度偏低 → thorough 续跑(2 轮辩论 + 盲评终判 + 元审查);其余 → standard 续跑(1 轮辩论 + 盲评终判)
+6. **终态**:按选定强度完成 4 阶段辩论,产出 verdict 和报告
+
+整个路径(token 数 / 早停标记 / 门控理由 / 最终 reviewer 组合)完整记录在 JSON verdict 的 `route` 字段中,可追溯可复盘。
+
+### 4.2 三档 Profile
+
+| 档位 | reviewer 数 | 辩论轮 | 元审查 | LLM 调用数 | 适用场景 |
+|---|---|---|---|---|---|
+| **fast** | 1 | 0 | 否 | 1 | 短文本快检、CI 门禁、迭代内自检 |
+| **standard** | 2 | 1 | 否 | ~6 | 常规文档审查 |
+| **thorough** | 3 | 2 | 是 | ~15 | 关键交付物、终审 |
+
+零参数时 auto 流程自动选档;显式 `--profile` 跳过渐进式;细粒度参数(`-r`/`--debate-rounds`/`--meta-review`)跳过渐进式,按指定参数执行。
+
+### 4.3 4 阶段辩论流程
+
+- **Phase 1 独立评审(并行)**:N 个 reviewer 各自独立审查被审查内容,互不知晓彼此判断。各 reviewer 并行执行,耗时约等于单次延迟而非 N 倍。当 reviewer 数 < 2 时跳过后续辩论阶段
+- **Phase 2 对抗辩论**:各 reviewer 看到其他人的观点后进行反驳。1-3 轮,每轮前检查预算。单 reviewer 快检形态跳过此阶段
+- **Phase 3 盲评终判(并行)**:辩论结束后,各 reviewer 独立给出最终裁决。单 reviewer 快检形态跳过此阶段(复核者=初判者,自检无增量价值)
+- **Phase 4 裁决合成**:加权聚合各 reviewer 终判。整体 severity 取最严判定(critical > major > minor > pass,显式排序),置信度按 reviewer 权重加权平均。计算 consensus_score(reviewer 间一致度)和 stability_score(辩论前后立场稳定性)
+
+### 4.4 元审查流程
+
+1. **Verdict 序列化**:原始审查的 Verdict 被序列化为文本,作为元审查的输入内容
+2. **多 meta-reviewer 对抗**:至少 2 个 meta-reviewer(不同模型/视角)对原始审查报告进行审查,维度包括漏判、过判、置信度失准、推理缺口、共识假象、完整性审计
+3. **显式校准公式**:`calibrated = original_confidence × (1 - meta_penalty)`,其中 meta_penalty 根据元审查发现的最严重 severity 计算(critical=0.5, major=0.3, minor=0.1, pass=0.0)。若元审查者给出显式调整量,则加权融合
+4. **升级判定**:使用校准后的 `calibrated_confidence`(而非原始 confidence)作为是否升级人工的判定依据
+
+### 4.5 输出格式
+
+每次审查输出两种格式:Markdown 报告(人类阅读)和 JSON Verdict(机器消费)。
+
+JSON Verdict 核心字段:
+
+```json
+{
+  "verdict": {
+    "severity": "major",
+    "confidence": 0.65,
+    "calibrated_confidence": 0.455,
+    "escalate_to_human": true,
+    "findings": [
+      {"description": "...", "severity": "major", "confidence": 0.72,
+       "evidence": "原文引用", "suggestion": "改进建议"}
+    ]
+  },
+  "route": {"profile": "standard", "reviewer_names": ["..."], "reason": "..."},
+  "consensus_score": 0.75,
+  "stability_score": 1.0,
+  "meta_review": {},
+  "cost": {"total_tokens": 15420, "total_cost_usd": 0.12}
+}
+```
+
+### 4.6 主动验证（graphify 证据注入）
+
+审查代码产出物时,引擎在调 reviewer 之前自动尝试从本地 graphify 知识图谱收集代码结构证据,注入 reviewer prompt 的 context 部分。这是**证据注入**,不是工具执行:reviewer 仍然不执行工具,仍然是纯 LLM 调用,但 prompt 里多了代码结构证据(调用链、依赖关系、跨文件引用),reviewer 能据此验证 finding 是否与代码实际结构一致。
+
+**触发条件**(全部满足才收集证据):
+1. graphify CLI 在 PATH 中可用
+2. 当前工作目录下存在 `.graph/graph.json` 图谱文件
+3. 被审查内容看起来像代码(文件名有代码后缀如 .py/.ts/.go/.rs,或内容含 def/class/function/import 等关键字)
+
+**不满足时静默跳过**,降级为纯 LLM 模式(无证据注入),reviewer 只基于被审查文本判断。用户无感知,无需配置。
+
+**收集方式**:引擎调 `graphify query` 和 `graphify explain` CLI 命令,查询与被审查内容相关的节点和调用关系。输出是纯文本,直接拼装到 reviewer prompt 的 `# 背景上下文` 部分。
+
+**与 AaaJ 原始工具层的对比**:AaaJ 用 tree-sitter/BM25/embedding 运行时构建图谱(只支持 Python,绑 workspace,重依赖)。graphify 路线用预构建图谱(25+ 语言,不绑 workspace,零额外依赖,查询 sub-ms)。替代 AaaJ 的 DevGraph/DevLocate/DevRead/DevCodeSearch 四个模块,且更准更快。不替代 DevTextRetrieve(轨迹评估,需要 agent 执行日志,图谱不覆盖)。
+
+`severity` 为枚举(critical > major > minor > pass,显式排序);`consensus_score` 是 reviewer 间一致度(非聚合置信度);`stability_score` 是辩论前后立场稳定性;`calibrated_confidence` 是元审查校准后的置信度(升级判定优先使用);`route` 记录流程决策路径(可审计)。
+
+---
+
+## 5. 功能性需求
 
 ### FR-1: 多阶段通用审查
 
@@ -80,7 +186,7 @@
 - 输入是任意文本(需求文档/规格/代码/审查报告等)
 - 不依赖文件系统路径或特定数据结构(如 workspace、trajectory)
 - 同一系统支持上述所有审查范围,通过切换 reviewer 配置实现
-- 每个子阶段有对应的示例 reviewer YAML(见 `reviewers/` 目录)
+- 每个子阶段有对应的示例 reviewer 模板(见 7.3 内置模板清单)
 
 ### FR-2: 多 Agent 对抗审查策略
 
@@ -91,7 +197,7 @@
 | **多 agent 辩论** | N 个 reviewer 独立评审 → 1-3 轮对抗辩论(互相挑战) → 盲评终判 → 裁决合成 | 核心 |
 | **交叉审查** | 一个 reviewer 审查另一个 reviewer 的判断(元审查的一种形式) | 核心 |
 | **多模型配置** | 不同 reviewer 可指定不同 LLM 模型(如 Claude sonnet + Claude opus + GPT-4o),避免同模型共享盲区 | 核心 |
-| **多数投票** | 同一 reviewer 配置内,同一模型调用 N 次后投票聚合(复用原始 AaaJ `DevAsk.check()` 的 `majority_vote` + `satisfied_ratio` + `confidence` 算法),作为辩论的轻量级反幻觉手段 | 正式策略(保留自 AaaJ) |
+| **多数投票** | 同一 reviewer 配置内,同一模型调用 N 次后投票聚合,作为辩论的轻量级反幻觉手段 | 正式策略(保留自 AaaJ) |
 
 辩论阶段须满足:
 - Phase 1(独立评审)各 reviewer **并行执行**,非串行
@@ -99,21 +205,23 @@
 - **单 reviewer 快检形态下跳过盲评终判**(复核者=初判者,自检无增量价值;抗随机用 reviewer 模板的 `majority_vote` 多次独立采样,优于自我反思);`stability_score` 标记 `degraded=true`
 - 辩论轮次后计算 **stability score**(多轮辩论后观点稳定性),作为共识可信度的辅助指标
 
-**流程决策自动化**(三层模型,见 design.md 4.8):
-- **L1 入口路由(默认 auto)**:零参数调用时,一次轻量 LLM 分类(temperature=0,可审计)自动判定内容类型与复杂度,选定档位(fast/standard/thorough)与 reviewer 组合——对标 LangGraph supervisor 路由 + CyberAgent 零参数体验
-- **L0 规则自动(流程主体)**:全部流程跳过/短路由确定性代码规则决定(reviewer 计数/预算数字/置信度阈值比较),可复现;LLM 对流程主体零决定权
-- **L2 人工覆盖(可选)**:`--profile fast/standard/thorough` 半决策,或细粒度参数全决策;显式参数覆盖 auto 路由
-- 路由结果(档位/reviewer 组合/理由)完整记录于 JSON verdict 的 `route` 字段,可追溯
+**流程决策自动化**:
+- **渐进式审查(默认 auto,零 LLM 预分类)**:零参数调用时**不做先验复杂度分类**,而是**哨兵先行 + 结果驱动门控**——流程强度由 Phase 1 的实测信号决定,而非入口处的内容预测(详见 4.1 节)
+- **规则自动(流程主体)**:全部流程跳过/短路由确定性代码规则决定(reviewer 计数/预算数字/置信度阈值比较/门控规则),可复现;LLM 对流程主体零决定权
+- **人工覆盖(可选)**:`--profile fast/standard/thorough` 半决策,或细粒度参数全决策;显式参数跳过渐进式,直接按指定参数执行
+- 成本特征:简单内容(哨兵干净通过)1 次调用;中等 ~9 次;复杂 ~15 次;相比先验 LLM 路由省去入口分类调用
+- 早停判定保守设计:置信度阈值从高(0.9),错向代价不对称——不必要续跑仅浪费 ~10 次调用,错误早停会漏审关键问题
+- **执行载体**:门控与 4 阶段流程在引擎的 prepare/resume 状态机中确定性推进(见 FR-11);宿主侧 judge-manager 仅机械执行任务(拉起 reviewer Agent / 落盘 / 调引擎),不参与任何流程决策
 
-### FR-3: Claude 作为默认 LLM 后端
+### FR-3: LLM 能力宿主化(用户零模型配置)
 
-系统默认使用 Claude(Anthropic)作为 LLM 后端,同时支持多模型混用以避免同模型共享盲区。
+主流场景下,全部 reviewer 的 LLM 能力(模型、凭证、额度)来自宿主 agent 已有配置,系统不得要求用户单独配置模型串或 API key。
 
-- **默认模型**:通过 `litellm` 调用 `anthropic/claude-*` 模型(CLI `--model` 参数默认值)
-- **per-reviewer 覆盖**:reviewer YAML 可指定不同模型(如 Claude opus、GPT-4o),实现异构模型交叉验证(FR-2)
-- 不绑死单一供应商:默认是 Claude,但 reviewer 级别允许使用其他模型以形成交叉验证
-- **凭证继承(宿主会话)**: 系统作为被编码 agent 调用的质量关卡,LLM 凭证默认从宿主会话环境继承而非要求独立 API key。Claude Code: `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`(setup-token)自动继承,订阅登录凭证不可继承;OpenCode: 经本地网关(`--base-url`/`opencode-llm-proxy`)或启动 shell 显式 export。解析顺序:显式参数 > 环境变量 > litellm 内部回退
-- **不支持**作为 Claude Code skill 在会话内触发(见 design.md 1.5 节:仅 CLI 管道方式)
+- **执行载体**:每次 reviewer 调用 = 宿主内拉起一个实体 reviewer Agent(FR-10 安装产物);模型由 Agent 定义文件的 `model` 字段声明(**宿主命名空间**),未声明 = 宿主默认模型
+- **宿主命名空间**:claude 系宿主仅支持 Anthropic 系模型(`opus`/`sonnet`/完整模型 ID);opencode 系宿主支持其已配置的任意 provider(`provider/model` 格式,含自定义网关)。**异构面板**(不同角色不同模型形成对抗)在两个宿主下均须保留
+- **凭证**:完全由宿主管理(登录态/订阅额度/provider key),引擎不接触、不解析、不存储任何凭证
+- **litellm 直连回退**:`--llm litellm` 强制走引擎内置 litellm 后端,服务 CI/无宿主场景;此时模型串为 litellm 命名空间,凭证经环境变量
+- 主路径不引入宿主专有的 headless CLI 依赖(见 NFR-7)
 
 ### FR-4: 置信度评分与人工升级
 
@@ -123,40 +231,41 @@
 - 整体 Verdict 包含聚合后的 `confidence`
 - 可配置阈值(默认 0.8):**置信度低于阈值的标记 `escalate_to_human: true`**
 - 经过元审查的,使用**校准后的 confidence**(`calibrated_confidence`)作为升级判定依据
-- 置信度通过 **Pydantic schema 强制结构化输出**(借鉴 LangGraph `with_structured_output(Pydantic)` 模式),而非依赖 LLM 自由文本解析。解析层须提供多级降级(JSON 代码块 → 裸 JSON → `<SATISFIED>` 标签),确保鲁棒性
+- 置信度通过结构化输出 schema 强制约束,而非依赖 LLM 自由文本解析。解析层提供多级降级(JSON 代码块 → 裸 JSON → 标签降级),确保鲁棒性
 - **`severity` 字段使用枚举类型**(非裸字符串),避免字符串字典序比较导致的"最严判定"逻辑错误
 
-### FR-5: 独立 CLI
+### FR-5: 入口形态——judge-manager 主 Agent;CLI 为引擎与安装器
 
-系统必须可作为独立 CLI 运行。
-
-- CLI 支持三种输入:直接文本(`--content`)、文件(`--file`)、stdin 管道
-- `--file` 支持 `.json` 后缀:当传入 JSON verdict 文件时,自动提取 verdict 文本作为审查内容(支持元审查场景)
-- **零参数即全自动**:`aj review --file x.md` 不带任何流程参数时走 auto 路由(FR-2 三层决策模型),全程用户零决策;`--profile fast/standard/thorough` 显式选档;细粒度参数(`-r`/`--debate-rounds`/`--meta-review`)覆盖路由
-- 不依赖特定 agent 运行时(不绑 Claude Code session、不绑 LangGraph Platform)
-- **`--interactive` 模式**(借鉴 LangGraph `interrupt()` 概念,但不使用 Pregel/checkpointer):当审查置信度低于阈值时,CLI 暂停等待 stdin 人工裁决输入,而非直接输出 `escalate_to_human`。适用于人工在环场景;非 interactive 模式直接标注升级标记
-- **不支持**作为 Python 库嵌入 agent 运行时——对外只暴露 CLI 管道方式,避免耦合(见 design.md 1.5 节)
+- **主流入口**:宿主内的 `judge-manager` 实体 Agent(FR-10 安装)。职责仅限:初始化运行 → 按引擎指令机械执行(拉起 reviewer Agent / 落盘结果 / 调用引擎推进)→ 终态向用户汇报(findings 摘要 / escalate 标记 / route 路径审计)。**不安装宿主 skill**——意图匹配由 judge-manager 的 description 完成
+- **引擎 CLI**:命令全称 **`agent-judges`**(避免短名冲突,废弃 `aj`)。子命令:`review`(审查)/ `install`(安装,FR-10)/ `list-reviewers` / `list-skills` / `inspect-reviewer` / `evaluate`
+- `review` 支持三种输入:`--content` / `--file` / stdin 管道;`--file` 的 `.json` 后缀自动提取 verdict 文本(元审查场景)
+- **零参数即全自动**:`agent-judges review --file x.md` 不带流程参数时走渐进式审查(FR-2),全程用户零决策;`--profile fast/standard/thorough` 显式选档;细粒度参数跳过渐进式,按指定参数执行
+- **prepare/resume 接口**(agent 驱动模式):`agent-judges review --file X --run-dir RUN` 初始化并发出首批任务后退出;`agent-judges review --resume --run-dir RUN` 消费结果、确定性推进、发出下一批任务或产出终态。driver 协议见 FR-11
+- **direct 模式**(`--llm litellm`):引擎进程内完成全部 LLM 调用,服务 CI/裸机;`--max-cost`/`--model`/`--override-model` 仅此模式有效
+- `--interactive` 模式保留(低置信度暂停等 stdin 人工裁决;仅 direct 模式可用)
+- 不作为 Python 库嵌入 agent 运行时
 
 ### FR-6: 外部定义审查 Agent
 
 审查者(reviewer)必须可通过外部配置文件定义,无需改代码。
 
-- 配置格式:YAML(`*.yaml` 或 `*.yml`)
-- 每个 reviewer 定义:名称、描述、模型(**可选**,不指定时用 CLI `--model` 默认值)、system prompt、检查清单(checklist)、权重、`majority_vote`(同模型多次调用投票数,默认 1)
-- 系统从指定目录加载所有 reviewer 配置
-- **约束模型**(匿名槽位 + 模板注入): 系统提供匿名的辩论 reviewer 槽位(行为框架固定),用户模板只注入"审查视角"(persona + checklist),**不能自定义辩论行为、输出格式、流程编排**——这些由系统固定控制(见 design.md 1.6 节)
+- **配置格式:Markdown**(`reviewers/*.md`:YAML frontmatter + persona 正文,与 skills/ 的 SKILL.md 同族);过渡期兼容读取 `*.yaml`
+- frontmatter 字段:`name`、`description`、`model`(**可选,宿主命名空间**,见 FR-3/FR-10)、`weight`、`majority_vote`(同模型多次调用投票数,默认 1)、`skills`(知识包引用);checklist 写在 frontmatter,**persona 即 Markdown 正文**(原 system_prompt)
+- 系统从指定目录加载所有 reviewer 配置;`agent-judges install` 据此生成宿主实体 Agent(FR-10)
+- **约束模型**(匿名槽位 + 模板注入):系统提供匿名的辩论 reviewer 槽位(行为框架固定),用户模板只注入"审查视角"(persona + checklist),**不能自定义辩论行为、输出格式、流程编排**——这些由系统固定控制(见 design.md 1.6 节)
 - 用户可自定义任意审查视角模板(如 `security-auditor`、`compliance-reviewer`)
-- **外部审查 skill(知识注入型)**: 用户可通过 SKILL.md 格式(Markdown + YAML frontmatter,兼容业界 skill 约定)定义审查知识包,由通用匿名 agent 槽位加载。两种方式: ① reviewer 模板通过 `skills: [name]` 字段引用(skill 正文注入 persona);② CLI `-r skill:<name>` 即席加载(匿名槽位直接以 skill 为完整审查视角)。skill 为纯 LLM 知识包(无工具执行),与纯 LLM 审查范式一致(见 design.md 1.6.4);工具型 skill 明确不支持
-- reviewer 的 `model` 为可选字段,实现"全局默认 + per-reviewer 覆盖"的灵活配置;CLI `--override-model` 可强制覆盖所有 reviewer 的 model(用于"全用某模型测试"场景)
-- 系统内置过程级审查模板(借鉴 CyberAgent 6 轴): 过程合规(process-compliance)/欺骗检测(deception-detector)/危险操作扫描(dangerous-operation-scanner),用户传入 agent 执行日志时选择性启用
+- **外部审查 skill(知识注入型)**:用户可通过 SKILL.md 格式定义审查知识包,由通用匿名 agent 槽位加载。两种方式:① reviewer 模板通过 `skills: [name]` 字段引用;② CLI `-r skill:<name>` 即席加载。skill 为纯 LLM 知识包(无工具执行),与纯 LLM 审查范式一致
+- reviewer 的 `model` 为可选字段(宿主命名空间),不写 = 宿主默认模型;litellm 直连模式下 `--model`/`--override-model` 语义保留
+- 系统内置过程级审查模板(借鉴 CyberAgent 6 轴):过程合规(process-compliance)/欺骗检测(deception-detector)/危险操作扫描(dangerous-operation-scanner),用户传入 agent 执行日志时选择性启用
 
 ### FR-7: 提示词传递审查内容
 
 被审查的内容通过 prompt 流入系统,而非依赖特定数据结构或文件路径解析。
 
-- `DebateOrchestrator.run(content: str, ...)` 接受任意文本
+- 系统接受任意文本作为被审查内容
 - reviewer 的 system prompt + user prompt 组合传递被审查内容
-- 元审查时,上一轮的 `Verdict` 序列化为文本后作为 `content` 传入
+- agent 驱动模式下:引擎生成的完整 user prompt 落盘为任务文件,driver **逐字**使用;reviewer 的 persona(system)由宿主实体 Agent 定义自带(FR-10)
+- 元审查时,上一轮的 `Verdict` 序列化为文本后作为内容传入
 
 ### FR-8: 元审查(审查结果可被审查)
 
@@ -164,7 +273,7 @@
 
 - `meta-reviewer` 配置定义元审查维度(漏判/过判/置信度失准/推理缺口/共识假象)
 - 元审查须包含**完整性审计**(借鉴 agent-review-panel):检查原始审查是否覆盖了被审查内容的所有关键维度
-- 元审查须使用**至少 2 个 meta-reviewer**(不同模型或不同 persona),形成真正对抗;单 reviewer 无法形成辩论对抗,会退化为自说自话
+- 元审查须使用**至少 2 个 meta-reviewer**(不同模型或不同 persona),形成真正对抗
 - **校准必须通过显式公式实现**(非简单覆盖元审查者自身的 confidence),详见 [design.md](./design.md) 5.4 节
 - CLI 支持 `--meta-review` 开关和 `--review-depth N` 参数(默认 0 = 不元审查;`--meta-review` 等价于 `--review-depth 1`)
 - 元审查输出校准后的 `calibrated_confidence`
@@ -177,13 +286,41 @@
 | 格式 | 用途 | 输出方式 |
 |---|---|---|
 | **Markdown 报告** | 人类阅读——含各 reviewer 发现、辩论摘要、最终裁决、置信度、升级标记 | stdout(默认)或 `--output-dir` 指定目录写文件 |
-| **JSON Verdict** | 机器消费——可被下游(元审查 / CI/CD / 反馈循环)程序化处理 | stdout(当 `--output json`)或写文件(当 `--output both --output-dir ./reports`) |
+| **JSON Verdict** | 机器消费——可被下游(元审查 / CI/CD / 反馈循环)程序化处理 | stdout(当 `--output json`)或写文件(当 `--output both --output-dir`) |
 
 > **输出语义**:`--output markdown` → Markdown 到 stdout;`--output json` → JSON 到 stdout;`--output both` → 写两个文件(`report.md` + `verdict.json`)到 `--output-dir` 指定目录。JSON **不输出到 stderr**(stderr 仅供日志/进度,避免管道冲突)。
 
+### FR-10: 安装与宿主工件(`agent-judges install`)
+
+- 命令:`agent-judges install [--host auto|claude-code|opencode] [--global|--project] [--reviewers-dir DIR]`
+- **安装产物**(默认装宿主全局目录;`--project` 装项目级):
+  - `judge-manager` 主 Agent(来自 `integrations/<host>/agent/judge-manager.md` 模板)
+  - 全部 reviewer Agent(含 meta-reviewer),由 `reviewers/*.md` 源**生成**:保留 `name` / `model`(宿主命名空间)/ `description` / 正文;正文 = persona + 系统固定审查框架;剥离 `checklist`/`weight`/`majority_vote`/`skills` 等引擎专有键
+  - **防直接触发**:生成的 reviewer description 必须注明"内部审查组件,由 judge-manager 经引擎编排调用,请勿直接触发";opencode 侧 reviewer 加 `mode: subagent`
+- 安装产物是**编译产物**:`reviewers/*.md` 与 `integrations/` 是唯一真相,修改源后重新 install 生效
+- 幂等:重复 install 覆盖并提示,输出安装清单
+
+### FR-11: 执行模型——prepare/resume 状态机
+
+- **编排核心纯化**:渐进式门控 / 4 阶段推进 / 合成 / 降级全部实现为纯函数;两种执行器共享同一核心——agent 驱动(任务落盘,由 judge-manager 执行)与 litellm 直连(引擎进程内执行)
+- **prepare/resume 接口**:`prepare` 初始化运行并发出首批任务后退出;`resume` 消费已有结果、确定性推进、发出下一批任务或产出终态。全部流程判定记录于运行状态与 verdict 的 `route` 字段(可审计)
+- **driver 协议**(judge-manager 必须遵守):循环 = 调 `--resume` → 读任务 → 逐字 prompt 原生拉起对应 Agent → 原始输出落盘 → 循环,直至终态出现;**禁止**改写 prompt / 自行增删任务 / 跳过或代答门控
+- **幂等**:`--resume` 按已有结果推进,重复执行无副作用;中断后可续跑;推进前校验结果完整性,缺失任务不推进
+- agent 模式下成本字段尽力而为(宿主管记账);`--max-cost` 仅 direct 模式生效
+
+### FR-12: 主动验证（graphify 证据注入）
+
+- 审查代码产出物时,引擎在调 reviewer 前自动尝试从本地 graphify 知识图谱收集代码结构证据,注入 reviewer prompt 的 context 部分
+- **触发条件**(全部满足):① graphify CLI 在 PATH 中 ② 当前工作目录存在 `.graph/graph.json` ③ 被审查内容看起来像代码(代码文件后缀或含 def/class/function/import 等关键字)
+- **不满足时静默跳过**:降级为纯 LLM 模式,用户无感知,无需配置。不影响非代码产出物(需求文档/规格/设计等)的审查
+- **收集方式**:调 `graphify query`(BFS 遍历找相关节点)和 `graphify explain`(解释节点及邻居)CLI 命令,输出纯文本,拼装为 `# 代码结构证据` 注入 prompt
+- **超时保护**:单次 graphify CLI 调用超时 15 秒,超时或异常静默跳过
+- **reviewer 侧零改动**:证据以文本形式存在于 prompt context,reviewer 无感知证据来源,仍是纯 LLM
+- **替代 AaaJ 工具层**:替代 DevGraph/DevLocate/DevRead/DevCodeSearch 四模块(代码结构证据),不替代 DevTextRetrieve(轨迹评估,需 agent 执行日志)
+
 ---
 
-## 4. 非功能性需求
+## 6. 非功能性需求
 
 ### NFR-1: 依赖精简
 
@@ -204,9 +341,8 @@
 
 ### NFR-4: 性能——独立评审并行执行
 
-- Phase 1(独立评审)各 reviewer **并行执行**(用 `ThreadPoolExecutor` 或 `asyncio`),而非串行
+- Phase 1(独立评审)各 reviewer **并行执行**,而非串行
 - N 个 reviewer 的独立评审耗时 ≈ max(单次延迟),而非 sum(单次延迟)
-- 借鉴 LangGraph 图原语天然支持并行的设计理念
 
 ### NFR-5: 辩论稳定性度量
 
@@ -217,20 +353,171 @@
 
 基座选 MIT 许可的组件,改造后系统可自由使用和分发。
 
+### NFR-7: 宿主可迁移性
+
+主路径(agent 驱动模式)对宿主的依赖收敛为三项公共能力:①Agent 定义文件(Markdown + frontmatter,业界事实标准)②原生 subagent 拉起 ③shell。**不得引入宿主专有的 headless CLI 调用**(如 `claude -p` / `opencode run`——各家旗标差异是迁移阻碍);新增宿主支持 = 新写一份 judge-manager 驱动定义 + install 适配器,引擎与 reviewer 源零改动。
+
 ---
 
-## 5. 选型调研结论
+## 7. 外部扩展机制
 
-### 5.1 调研范围
+### 7.1 reviewer 模板定义
 
-| 候选 | 来源 |
+reviewer 通过 Markdown 文件定义(`reviewers/*.md`):YAML frontmatter + persona 正文。
+
+**frontmatter 字段**:
+
+| 字段 | 说明 |
 |---|---|
-| `metauto-ai/agent-as-a-judge` | GitHub, ICML 2025, Python, litellm, MIT |
-| CyberAgent agent-as-a-judge 集成 | CyberAgent 开发者博客(2026-06), Claude Code skill |
-| LangGraph oversight/guardian | langchain-ai/langgraph + langgraph-supervisor-py |
-| `okuuva/agent-review-panel` | GitHub, Claude Code plugin, 多 agent 辩论 |
+| `name` | 唯一标识(slug 格式) |
+| `description` | 一句话描述 |
+| `model` | 可选,宿主命名空间(claude 系 `opus`/`sonnet`;opencode 系 `provider/model`)。省略 = 宿主默认模型 |
+| `weight` | 聚合权重(默认 1.0) |
+| `majority_vote` | 同模型多次调用投票数(默认 1,>1 时启用多数投票) |
+| `skills` | 知识包引用列表(可选) |
 
-### 5.2 对照结论
+**persona 正文**:Markdown 正文即 reviewer 的人设与关注维度(原 system_prompt)。checklist 写在 frontmatter 中。
+
+**约束模型(匿名槽位 + 视角注入)**:系统提供匿名的辩论 reviewer 槽位(行为框架固定),用户模板只注入"审查视角"(persona + checklist)。用户可自定义 persona / checklist / model / weight / majority_vote,**不能自定义辩论行为 / 输出格式 / 流程编排**——这些由系统固定控制,保证辩论流程兼容。
+
+### 7.2 skill 知识包定义
+
+skill 是用户自定义的审查知识包,采用 SKILL.md 格式(Markdown 正文 + YAML frontmatter,兼容业界 skill 约定)。纯 LLM 知识包,不含工具执行。
+
+**两种加载方式**:
+
+| 方式 | 用法 | 说明 |
+|---|---|---|
+| 模板引用 | reviewer frontmatter 中 `skills: [name]` | skill 正文注入该 reviewer 的 persona |
+| 即席加载 | CLI `-r skill:<name>` | 匿名槽位直接以 skill 为完整审查视角 |
+
+skill frontmatter 可携带 `checklist` 字段,支持即席加载时作为检查清单。两种磁盘布局:`skills/<name>/SKILL.md`(目录式)或 `skills/<name>.md`(平铺式)。
+
+### 7.3 内置模板清单
+
+| 模板 | 覆盖场景 |
+|---|---|
+| `requirement-elicitation-reviewer` | 需求收集 |
+| `requirement-clarification-reviewer` | 需求澄清(歧义消除、假设记录) |
+| `requirement-decomposition-reviewer` | 需求分解(MECE) |
+| `requirement-prioritization-reviewer` | 需求优先级(MoSCoW) |
+| `requirement-acceptance-reviewer` | 验收标准(可测试性) |
+| `spec-reviewer` | 规格文档 |
+| `design-reviewer` | 设计文档(opus) |
+| `implementation-vs-requirement-reviewer` | 实现对照需求 |
+| `unit-test-reviewer` | 单元测试 |
+| `integration-test-reviewer` | 集成测试 |
+| `test-plan-reviewer` | 测试计划 |
+| `deployment-config-reviewer` | 部署配置(Dockerfile/IaC) |
+| `documentation-reviewer` | 文档(API 文档/README) |
+| `external-code-review-auditor` | 外部代码检视报告审查 |
+| `process-compliance-reviewer` | 过程合规(agent 日志) |
+| `deception-detector` | 欺骗检测(claim vs 证据) |
+| `dangerous-operation-scanner` | 危险操作扫描(引用 skill) |
+| `meta-reviewer` | 元审查(Claude) |
+| `meta-reviewer-2` | 元审查(GPT-4o,异构对抗) |
+
+### 7.4 内置 skill 清单
+
+| skill | 用途 |
+|---|---|
+| `dangerous-operations` | 危险操作正则模式清单 + 语义判定指引(被模板引用) |
+| `owasp-top10` | OWASP Top 10 安全审查知识包(含 checklist,可即席加载) |
+| `api-contract-review` | API 契约完整性审查(平铺式示例) |
+
+---
+
+## 8. 术语表
+
+| 术语 | 含义 |
+|---|---|
+| **reviewer** | 审查者,由 `reviewers/*.md`(Markdown + frontmatter)定义;安装后为宿主实体 Agent |
+| **Severity** | 严重程度枚举(`critical` / `major` / `minor` / `pass`),显式排序 `critical > major > minor > pass`,避免字符串字典序比较错误 |
+| **Verdict** | 审查裁决,系统的核心输出数据结构 |
+| **finding** | 单条审查发现(含 severity / confidence / evidence / suggestion) |
+| **consensus_score** | 共识度,反映 reviewer 之间在 satisfied 判定上的一致程度(0.0 = 完全分歧,1.0 = 完全一致),非聚合置信度 |
+| **stability_score** | 稳定性,多轮辩论后 reviewer 观点的稳定程度(立场未翻转 = 高稳定),作为共识可信度的辅助指标 |
+| **majority_vote** | 多数投票,同一 reviewer 配置内同一模型调用 N 次后投票聚合,作为轻量级反幻觉手段 |
+| **元审查 (meta-review)** | 对审查结果本身的再次审查,须使用至少 2 个 meta-reviewer 形成对抗 |
+| **calibrated_confidence** | 元审查通过显式校准公式修正后的置信度,用于最终升级判定(非简单覆盖) |
+| **escalate_to_human** | 置信度低于阈值时标记,表示需要人工介入 |
+| **渐进式审查 (progressive review)** | 零参数 auto 模式:哨兵 reviewer 先审,两道纯规则门(早停判定/续跑强度)按 Phase 1 实测结果决定流程强度,替代先验 LLM 复杂度分类 |
+| **哨兵 (sentinel)** | 渐进式审查中第一个独立评审的 reviewer(按文件名/内容提示确定性选定);其高置信干净通过是早停的必要条件 |
+| **skill (审查 skill)** | 用户自定义的审查知识/指令包(SKILL.md 格式),由匿名 reviewer 槽位加载。知识注入型,不含工具执行;可被 reviewer 模板引用或 `-r skill:<name>` 即席加载 |
+| **judge-manager** | 宿主内实体主 Agent(install 安装产物):机械执行驱动协议(拉起 reviewer Agent / 落盘 / 调引擎推进),终态向用户汇报;不做任何编排决策 |
+| **实体 reviewer Agent** | 安装进宿主的 reviewer 实例(Agent 定义文件),模型由其 frontmatter 声明(宿主命名空间);由 judge-manager 按引擎任务拉起,不直接面向用户 |
+| **run-dir / prepare-resume** | 一次审查的运行目录与引擎状态机接口:prepare 发出任务后退出,resume 消费结果确定性推进(FR-11)。运行状态可审计、可断点续跑 |
+| **主动验证 (active verification)** | 引擎在调 reviewer 前从 graphify 知识图谱收集代码结构证据(调用链、依赖关系),注入 reviewer prompt 的 context 部分。reviewer 仍为纯 LLM,不执行工具,但 prompt 里多了代码结构证据。graphify 不存在时静默降级为纯 LLM 模式 |
+| **证据注入 (evidence injection)** | 主动验证的实现方式:证据收集发生在 reviewer 调用之前,证据以文本形式拼入 prompt,reviewer 无感知证据来源。区别于"工具执行"(reviewer 自己调工具),证据注入不改变纯 LLM 范式 |
+| **graphify** | 预构建的代码知识图谱(SQLite + JSON,25+ 语言,全 AST 精确解析)。引擎通过 `graphify query` / `graphify explain` CLI 命令查询相关子图,获取调用链和依赖关系文本 |
+
+---
+
+## 9. 在 Claude Code / OpenCode 中使用
+
+### 9.1 安装
+
+```bash
+# 自动探测宿主(claude-code/opencode),装全局
+agent-judges install
+
+# 显式指定宿主,装项目级
+agent-judges install --host opencode --project
+```
+
+安装产物:judge-manager Agent + 全部 reviewer Agent(含 meta-reviewer)。安装产物是编译产物,修改 `reviewers/*.md` 或 `integrations/` 源后重新 install 生效。之后在宿主会话里直接说"帮我对抗审查这份 spec.md",宿主委派 judge-manager 完成审查。
+
+### 9.2 凭证继承
+
+LLM 凭证优先从调用方会话环境继承,解析顺序:显式参数 > 环境变量 > litellm 内部回退。
+
+**Claude Code**:`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token` 导出)均可自动继承;Pro/Max 订阅登录(`/login`)的 OAuth 凭证不导出到子进程环境,**不可复用**,需改用 `claude setup-token` 或设置 `ANTHROPIC_API_KEY`。注意:宿主设置 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 时所有凭证会从子进程环境中剥离,需在 `.env` 显式配置或经本地网关访问。
+
+**OpenCode**:provider 凭证存储在 `~/.local/share/opencode/auth.json`,不导出为子进程环境变量。两种接法:① 安装社区插件 `opencode-llm-proxy`(本地 127.0.0.1:4010,线协议兼容),配合 `--base-url` 使用;② 在启动 opencode 的 shell 中显式 export provider key。
+
+**解析顺序速查**:
+- `anthropic/*` 模型:`--base-url`/显式参数 > `ANTHROPIC_API_KEY` > `ANTHROPIC_AUTH_TOKEN` > `CLAUDE_CODE_OAUTH_TOKEN` > `ANTHROPIC_BASE_URL`
+- `openai/*` 模型:`OPENAI_API_KEY` / `OPENAI_BASE_URL`
+- 无凭证时 CLI 给出可操作提示(本地模型如 `ollama/*` 不误报)
+
+### 9.3 使用示例
+
+```bash
+# 零参数全自动(推荐):渐进式审查自动选档位与 reviewer 组合
+agent-judges review --file ./spec.md
+
+# 半决策:显式选档
+agent-judges review --file ./spec.md --profile thorough
+
+# 全决策:细粒度参数
+agent-judges review --content "需求文本..." \
+  -r requirement-elicitation-reviewer -r spec-reviewer \
+  --debate-rounds 2 --threshold 0.8
+
+# 管道接入(Claude Code / OpenCode / CI)
+cat requirements.md | agent-judges review -r requirement-elicitation-reviewer -o json | jq '.verdict.escalate_to_human'
+
+# 元审查:审查上一轮的审查结果
+agent-judges review --file verdict.json --meta-review -o json > meta_verdict.json
+
+# 双格式输出到目录
+agent-judges review --file ./spec.md --output both --output-dir ./reports
+
+# 即席加载 skill 为审查视角
+agent-judges review --file api-spec.md -r skill:api-contract-review
+```
+
+### 9.4 输出格式
+
+`--output markdown`(默认)→ stdout 人类可读报告;`--output json` → stdout 机器可读 verdict;`--output both --output-dir DIR` → 写 `report.md` + `verdict.json` 两个文件。JSON 不输出到 stderr(stderr 仅供日志)。
+
+JSON verdict 核心字段:`severity`(枚举,显式排序)、`confidence`(聚合置信度)、`calibrated_confidence`(元审查校准后,升级判定优先使用)、`escalate_to_human`(是否需人工介入)、`findings`(发现列表,含 description/severity/confidence/evidence/suggestion)、`route`(流程决策路径,可审计)、`consensus_score`(reviewer 间一致度)、`stability_score`(辩论立场稳定性)、`cost`(token 与费用)。
+
+---
+
+## 10. 选型调研结论
+
+### 10.1 对照结论
 
 | 需求 | AaaJ | CyberAgent | LangGraph | agent-review-panel |
 |---|---|---|---|---|
@@ -248,45 +535,12 @@
 
 (✅=2, ⚠️=1, ❌=0;得分:AaaJ=11, CyberAgent=5, LangGraph=13, agent-review-panel=12)
 
-### 5.3 基座选择:`metauto-ai/agent-as-a-judge`(fork 改造)
+### 10.2 基座选择与定位
 
-**选择理由(非得分最高,而是改造成本最低)**:
+选择 `metauto-ai/agent-as-a-judge`(fork 改造)作为基座,非得分最高,而是改造成本最低。AaaJ 已解决三件最难的事:多轮投票聚合算法、置信度计算公式、judge prompt 工程模板。这些在 LangGraph 上都要从零写。AaaJ 的短板(无辩论、绑 benchmark、无多模型、无升级路由)可通过剥离 + 扩展解决;LangGraph 的短板(无审查语义)只能从零构建。剥离比构建快。
 
-AaaJ 已解决三件最难的事:
-1. 多轮投票聚合算法(`DevAsk.check()` 的 majority_vote + satisfied_ratio)
-2. 置信度计算公式(`confidence = max(satisfied_ratio, 1 - satisfied_ratio)`)
-3. judge prompt 工程模板
+从其他候选借鉴(不作为基座,只偷模式):CyberAgent 的双输出与过程级评估轴;agent-review-panel 的多 reviewer 辩论 + 盲评终判 + 完整性审计;LangGraph 的结构化输出与并行设计理念。
 
-这些在 LangGraph 上都要从零写。AaaJ 的短板(无辩论、绑 benchmark、无多模型、无升级路由)可通过**剥离 + 扩展**解决;LangGraph 的短板(无审查语义)只能**从零构建**。剥离比构建快。
-
-**不选 LangGraph 的关键原因**:
-- `interrupt()` 绑定 Pregel + checkpointer,对 CLI 是负担(本场景不需要跨会话暂停/恢复)
-- `langgraph-supervisor` 已软弃用(README 明确推荐手动 handoff 替代)
-- 审查语义(辩论拓扑、置信度 schema、评分 prompt、升级路由)全需自建(~500-1000 LOC)
-
-**从其他候选借鉴(不作为基座,只偷模式)**:
-- CyberAgent:Stop-hook 自动触发、主动验证(judge 跑工具验证 claim)、双输出(Markdown + JSON with suggested_action)
-- agent-review-panel:多 reviewer 辩论(1-3 轮)+ 盲评终判 + **完整性审计** + 多轮合并协议
-- LangGraph:`with_structured_output(Pydantic)` 强制结构化置信度输出;图原语天然并行(独立评审阶段并行执行);`interrupt()` 人工介入概念(本系统用 `--interactive` stdin 实现,不使用 Pregel/checkpointer)
+**本方案填补的空白**:业界唯一开源的、通用的、多 agent 辩论式的、可量化置信度的、自身可递归审查的 AI 产出审计 CLI。不替代 Claude Code / Codex 的实时 review,而是在 AI 产出链路中增加一个质量关卡。
 
 详细方案见 [design.md](./design.md)。
-
----
-
-## 6. 术语表
-
-| 术语 | 含义 |
-|---|---|
-| **reviewer** | 审查者,由 YAML 配置定义的角色化审查 agent |
-| **Severity** | 严重程度枚举(`critical` / `major` / `minor` / `pass`),使用 `StrEnum` 实现,定义显式排序 `critical > major > minor > pass`,避免字符串字典序比较错误 |
-| **Verdict** | 审查裁决,系统的核心输出数据结构 |
-| **finding** | 单条审查发现(含 severity / confidence / evidence / suggestion) |
-| **DebateOrchestrator** | 辩论编排器,管理多 reviewer 的独立评审→辩论→盲评→合成流程 |
-| **consensus_score** | 共识度,反映 reviewer 之间在 satisfied 判定上的一致程度(0.0 = 完全分歧,1.0 = 完全一致),非聚合置信度 |
-| **stability_score** | 稳定性,多轮辩论后 reviewer 观点的稳定程度(立场未翻转 = 高稳定),作为共识可信度的辅助指标 |
-| **majority_vote** | 多数投票,同一 reviewer 配置内同一模型调用 N 次后投票聚合,复用自 AaaJ `DevAsk.check()` 算法,作为轻量级反幻觉手段 |
-| **元审查 (meta-review)** | 对审查结果本身的再次审查,须使用至少 2 个 meta-reviewer 形成对抗 |
-| **calibrated_confidence** | 元审查通过显式校准公式修正后的置信度,用于最终升级判定(非简单覆盖) |
-| **escalate_to_human** | 置信度低于阈值时标记,表示需要人工介入 |
-| **LLMBroker** | 多模型管理器,支持 per-reviewer 指定不同模型 + 实例缓存 + 累计成本/token 追踪 |
-| **skill (审查 skill)** | 用户自定义的审查知识/指令包(SKILL.md 格式: Markdown 正文 + YAML frontmatter),由匿名 reviewer 槽位加载。知识注入型,不含工具执行;可被 reviewer 模板引用或 `-r skill:<name>` 即席加载 |

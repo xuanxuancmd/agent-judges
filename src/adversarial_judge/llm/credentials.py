@@ -1,6 +1,6 @@
 """Host-agent LLM credential resolution (Claude Code / OpenCode passthrough).
 
-``aj`` is designed to be invoked from coding-agent sessions (design.md 1.5).
+``agent-judges`` (litellm direct mode) is designed to be invoked from coding-agent sessions (design.md 1.5).
 It does not require its own API keys: LLM credentials are inherited from the
 calling session's environment, resolved per provider:
 

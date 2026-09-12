@@ -1,50 +1,52 @@
-"""L1 entry router (design.md 4.8): one lightweight LLM classification call
-(temperature=0, auditable via ``reason``) decides the profile and reviewer
-combination. The pipeline body stays deterministic (L0 rules).
+"""Deterministic flow helpers (design.md 4.8, revised: progressive review).
 
-Decision model:
-- L1 auto routing (default): route() decides profile + reviewers
-- L0 deterministic rules: the debate pipeline itself (see debate.py)
-- L2 human override: ``--profile`` or fine-grained CLI parameters
+The former L1 LLM entry router was replaced by the progressive
+sentinel-gated pipeline (see ``progressive.py``): flow strength is now
+decided by measured Phase-1 results, not by an a-priori classification.
+This module keeps:
 
-Parse failures degrade to the ``standard`` profile with a generic reviewer
-combination (rule-based fallback, never an error — routing is an
-optimization, not a dependency).
+- ``RouteDecision`` — the auditable route record rendered into the
+  JSON/markdown ``route`` field (classic ``--profile`` routing and the
+  progressive gates both produce one)
+- ``PROFILE_MAP`` — profile semantics used by ``--profile`` and the gates
+- ``generic_reviewer_combo`` — deterministic fallback panel
+- ``classify_content`` / ``deterministic_panel`` — zero-LLM reviewer
+  selection: filename/content-head hints → preferred reviewers, generic
+  fill to the requested size
 """
 
-import json
-import logging
+from __future__ import annotations
+
 import re
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
-from .llm.broker import LLMBroker
-from .utils.truncate import truncate_string
-
-logger = logging.getLogger(__name__)
-
-__all__ = ["RouteDecision", "PROFILE_MAP", "route", "generic_reviewer_combo"]
-
-VALID_PROFILES = ("fast", "standard", "thorough")
+__all__ = [
+    "RouteDecision",
+    "PROFILE_MAP",
+    "generic_reviewer_combo",
+    "classify_content",
+    "deterministic_panel",
+]
 
 
 class RouteDecision(BaseModel):
-    """Result of the L1 entry routing (auditable)."""
+    """Result of the flow decision (auditable).
+
+    ``token_count`` / ``early_stopped`` / ``gate_reason`` are populated by
+    the progressive gates; classic ``--profile`` routing leaves them unset.
+    """
 
     content_type: str = "other"  # requirement / spec / design / code / test / agent_log / review_report / other
     complexity: str = "medium"  # low / medium / high
     profile: str = Field(pattern="^(fast|standard|thorough)$")
     reviewer_names: list[str]
     reason: str
+    # progressive-mode audit fields (None for classic --profile routing)
+    token_count: int | None = None
+    early_stopped: bool = False
+    gate_reason: str | None = None
 
-
-ROUTER_SYSTEM_PROMPT = """你是审查流程路由器。分析输入内容的类型与复杂度,返回 JSON:
-{"content_type": "...", "complexity": "...", "profile": "fast|standard|thorough", "reviewer_names": ["..."], "reason": "..."}
-规则:
-- 短文本(<500字)/单一维度 → fast; 常规文档 → standard; 长文档/多维度/关键交付 → thorough
-- reviewer_names 从可用列表中选择与内容类型匹配的组合(每档 1/2/3 个)
-- reason 说明路由理由(可审计)
-- 只输出 JSON,不要其他内容"""
 
 PROFILE_MAP: dict[str, dict] = {
     "fast": {"reviewers": 1, "debate_rounds": 0, "meta_review": False},
@@ -53,107 +55,141 @@ PROFILE_MAP: dict[str, dict] = {
 }
 
 
+#: reviewers excluded from the generic fill pool. Process-level reviewers
+#: (agent-log scanners) are only relevant for log content and the example
+#: template is documentation, not a production reviewer.
+_GENERIC_EXCLUDE = {
+    "my-security-auditor",          # custom_example.md — example, not production
+    "dangerous-operation-scanner",  # process-level (agent log)
+    "deception-detector",           # process-level (agent log)
+    "process-compliance-reviewer",  # process-level (agent log)
+}
+
+
 def generic_reviewer_combo(available: list[str], count: int) -> list[str]:
-    """Generic deterministic reviewer combo: first ``count`` non-meta reviewers."""
-    non_meta = [r for r in available if not r.startswith("meta-")]
-    pool = non_meta or available
+    """Generic deterministic reviewer combo: first ``count`` non-meta,
+    non-process-level, non-example reviewers (document review pool)."""
+    pool = [
+        r
+        for r in available
+        if not r.startswith("meta-") and r not in _GENERIC_EXCLUDE
+    ] or available
     if not pool:
         raise ValueError("No available reviewers to route to")
     return pool[:count]
 
 
-def _default_reviewer_combo(available: list[str]) -> list[str]:
-    """Standard-profile fallback combo."""
-    return generic_reviewer_combo(available, PROFILE_MAP["standard"]["reviewers"])
+# ---------------------------------------------------------------------------
+# Zero-LLM reviewer selection: filename/content hints → preferred reviewers
+# ---------------------------------------------------------------------------
+
+#: (content_type, regex, preferred reviewers in order). Checked top to
+#: bottom; first match wins. Filenames are stronger signals than content,
+#: so filename hits are preferred over content hits.
+_CONTENT_HINTS: list[tuple[str, re.Pattern[str], list[str]]] = [
+    (
+        "review_report",
+        re.compile(r"code[-_ ]?review|检视报告|review[-_ ]?report", re.IGNORECASE),
+        ["external-code-review-auditor"],
+    ),
+    (
+        "agent_log",
+        re.compile(r"trajectory|执行日志|agent[-_ ]?log", re.IGNORECASE),
+        ["process-compliance-reviewer", "deception-detector"],
+    ),
+    (
+        "deployment",
+        re.compile(r"dockerfile|\biac\b|\bk8s\b|helm|部署", re.IGNORECASE),
+        ["deployment-config-reviewer"],
+    ),
+    (
+        "test",
+        re.compile(r"test[-_ ]?plan|测试计划|测试方案", re.IGNORECASE),
+        ["test-plan-reviewer"],
+    ),
+    (
+        "test",
+        re.compile(r"unit[-_ ]?test|单元测试", re.IGNORECASE),
+        ["unit-test-reviewer"],
+    ),
+    (
+        "test",
+        re.compile(
+            r"integration[-_ ]?test|集成测试|\.feature\b|gherkin|cucumber",
+            re.IGNORECASE,
+        ),
+        ["integration-test-reviewer", "requirement-acceptance-reviewer"],
+    ),
+    (
+        "spec",
+        re.compile(r"\bspec\b|规格", re.IGNORECASE),
+        ["spec-reviewer"],
+    ),
+    (
+        "design",
+        re.compile(r"\bdesign\b|设计|架构", re.IGNORECASE),
+        ["design-reviewer"],
+    ),
+    (
+        "requirement",
+        re.compile(r"requirement|需求", re.IGNORECASE),
+        ["requirement-clarification-reviewer", "requirement-acceptance-reviewer"],
+    ),
+    (
+        "documentation",
+        re.compile(r"readme|api[-_ ]?doc|文档", re.IGNORECASE),
+        ["documentation-reviewer"],
+    ),
+]
+
+_HINT_CONTENT_CHARS = 4000  # headings/titles live at the top of the content
 
 
-def _validate_reviewer_names(names: list, available: list[str], profile: str) -> list[str]:
-    """Keep only known reviewers, dedupe (preserve order), cap to the
-    profile's reviewer count, ensure at least one."""
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for n in names:
-        if n in available and n not in seen:
-            seen.add(n)
-            ordered.append(n)
-    cap = PROFILE_MAP[profile]["reviewers"]
-    ordered = ordered[:cap]
-    return ordered
+def _match_hints(text: str) -> tuple[str, list[str]] | None:
+    for content_type, pattern, preferred in _CONTENT_HINTS:
+        if pattern.search(text):
+            return content_type, list(preferred)
+    return None
 
 
-def _parse_route(response: str, available: list[str]) -> RouteDecision:
-    """Parse the router LLM's JSON response with degradation:
-    ```json block → bare JSON → rule-based standard fallback."""
-    data = None
-    match = re.search(r"```(?:json)?\s*(.*?)\s*```", response, re.DOTALL)
-    if match:
-        try:
-            data = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            data = None
-    if data is None:
-        match = re.search(r"\{.*\}", response, re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                data = None
+def classify_content(
+    filename: str | None, content: str
+) -> tuple[str, list[str]]:
+    """Deterministic content classification (zero LLM calls).
 
-    if isinstance(data, dict):
-        profile = str(data.get("profile", "standard"))
-        if profile not in VALID_PROFILES:
-            profile = "standard"
-        names = data.get("reviewer_names") or []
-        if isinstance(names, str):
-            names = [names]
-        reviewer_names = _validate_reviewer_names(names, available, profile)
-        if not reviewer_names:
-            reviewer_names = generic_reviewer_combo(
-                available, PROFILE_MAP[profile]["reviewers"]
-            )
-        return RouteDecision(
-            content_type=str(data.get("content_type", "other")),
-            complexity=str(data.get("complexity", "medium")),
-            profile=profile,
-            reviewer_names=reviewer_names,
-            reason=str(data.get("reason", "")),
-        )
-
-    # fallback: standard profile with a generic combo (rule degradation)
-    return RouteDecision(
-        content_type="other",
-        complexity="medium",
-        profile="standard",
-        reviewer_names=_default_reviewer_combo(available),
-        reason="router parse failed; degraded to standard profile (rule fallback)",
-    )
-
-
-def route(
-    broker: LLMBroker, content: str, available_reviewers: list[str]
-) -> RouteDecision:
-    """Entry routing: one lightweight LLM classification (temp=0).
-
-    The decision selects the profile + reviewer combination; the pipeline
-    body remains deterministic (L0 rules in debate.py).
+    Matches the filename first (strongest signal — ``spec.md`` → spec),
+    then the head of the content. Returns ``(content_type,
+    preferred_reviewers)``; unmatched content returns ``("other", [])``
+    and the caller falls back to the generic combo.
     """
-    llm = broker.get_llm()  # default model
-    # token-based preview (head matters most for type detection → tail-drop)
-    content_preview = truncate_string(content, max_tokens=1500, drop_mode="tail")
-    user = (
-        f"可用 reviewer: {available_reviewers}\n\n"
-        f"内容(截断):\n{content_preview}"
-    )
-    try:
-        response = llm.complete(ROUTER_SYSTEM_PROMPT, user, temperature=0.0)
-        decision = _parse_route(response, available_reviewers)
-    except Exception as exc:
-        logger.warning("auto routing failed (%s); using standard fallback", exc)
-        decision = RouteDecision(
-            content_type="other",
-            complexity="medium",
-            profile="standard",
-            reviewer_names=_default_reviewer_combo(available_reviewers),
-            reason=f"router call failed: {exc}; degraded to standard profile",
-        )
-    return decision
+    if filename:
+        hit = _match_hints(filename)
+        if hit is not None:
+            return hit
+    if content:
+        hit = _match_hints(content[:_HINT_CONTENT_CHARS])
+        if hit is not None:
+            return hit
+    return "other", []
+
+
+def deterministic_panel(
+    available: list[str],
+    size: int,
+    filename: str | None = None,
+    content: str = "",
+) -> tuple[str, list[str]]:
+    """Deterministic panel selection: classified preferences first, generic
+    fill to ``size``. Returns ``(content_type, panel)``.
+
+    ``panel[0]`` is the sentinel (preferred reviewer first, then registry
+    order) — the progressive flow relies on this for the sentinel-first run.
+    """
+    content_type, preferred = classify_content(filename, content)
+    panel: list[str] = [n for n in preferred if n in available]
+    for n in generic_reviewer_combo(available, len(available)):
+        if len(panel) >= size:
+            break
+        if n not in panel:
+            panel.append(n)
+    return content_type, panel[:size]

@@ -1,12 +1,18 @@
-"""Pluggable reviewer definitions loaded from external YAML files.
+"""Pluggable reviewer definitions loaded from external Markdown files (FR-6).
+
+Source format (v2): ``reviewers/*.md`` — YAML frontmatter (orchestration
+metadata) + Markdown body (the persona, formerly ``system_prompt``). Legacy
+``*.yaml`` files are still loaded during the transition period.
 
 Constraint model (design.md 1.6): the system provides *anonymous* debater
 slots with a fixed behaviour frame; user templates only inject a review
 perspective (persona + checklist). Debate behaviour, output schema and
-pipeline orchestration are system-controlled.
+pipeline orchestration are system-controlled. ``agent-judges install``
+compiles these sources into host agent definitions (FR-10).
 """
 
 import logging
+import re
 from pathlib import Path
 
 import yaml
@@ -15,6 +21,8 @@ from pydantic import BaseModel, Field, field_validator
 logger = logging.getLogger(__name__)
 
 __all__ = ["ChecklistItem", "ReviewerConfig", "ReviewerRegistry"]
+
+_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", re.DOTALL)
 
 
 class ChecklistItem(BaseModel):
@@ -85,22 +93,50 @@ class ReviewerRegistry:
                 raise FileNotFoundError(f"Skills directory not found: {skills_dir}")
             self.skills = SkillRegistry(skills_dir)
         self.reviewers: dict[str, ReviewerConfig] = {}
-        # (L-6) support both .yaml and .yml
-        for yml_file in sorted(reviewers_dir.glob("*.y*ml")):
-            data = yaml.safe_load(yml_file.read_text(encoding="utf-8"))
+        # MD is the v2 source format; YAML remains loadable during the
+        # transition. True same-name conflicts raise a duplicate error.
+        md_files = sorted(reviewers_dir.glob("*.md"))
+        legacy_yaml = sorted(reviewers_dir.glob("*.y*ml"))
+        for source in md_files + legacy_yaml:
+            if source.suffix.lower() == ".md":
+                data = self._parse_markdown(source)
+            else:
+                data = yaml.safe_load(source.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError(
-                    f"Invalid reviewer file (not a mapping): {yml_file}"
+                    f"Invalid reviewer file (not a mapping): {source}"
                 )
             config = ReviewerConfig(**data)
             if config.name in self.reviewers:
                 raise ValueError(
                     f"Duplicate reviewer name '{config.name}' "
-                    f"(defined again in {yml_file})"
+                    f"(defined again in {source})"
                 )
             self.reviewers[config.name] = config
         for config in self.reviewers.values():
             self._resolve_skills(config)
+
+    @staticmethod
+    def _parse_markdown(path: Path) -> dict:
+        """Parse a reviewer MD file: frontmatter metadata + persona body."""
+        text = path.read_text(encoding="utf-8")
+        match = _FRONTMATTER_RE.match(text)
+        if match is None:
+            raise ValueError(
+                f"Invalid reviewer file {path}: "
+                f"missing YAML frontmatter ('---\\nname: ...\\n---')"
+            )
+        try:
+            data = yaml.safe_load(match.group(1)) or {}
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid frontmatter YAML in {path}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"Invalid frontmatter (not a mapping) in {path}")
+        persona = match.group(2).strip()
+        if not persona:
+            raise ValueError(f"Invalid reviewer file {path}: persona body is empty")
+        data["system_prompt"] = persona
+        return data
 
     def _resolve_skills(self, config: ReviewerConfig) -> None:
         """Inject referenced skill bodies into the reviewer's persona."""

@@ -19,12 +19,6 @@ from fixtures.mock_llm import MockLLM, MockLLMBroker
 
 runner = CliRunner()
 
-ROUTE_JSON = (
-    '{"content_type": "spec", "complexity": "medium", "profile": "standard",'
-    ' "reviewer_names": ["spec-reviewer", "design-reviewer"],'
-    ' "reason": "常规规格文档"}'
-)
-
 
 @pytest.fixture
 def install_mock_broker(monkeypatch):
@@ -41,8 +35,7 @@ def install_mock_broker(monkeypatch):
 
 def _base_responses():
     return {
-        "审查流程路由器": ROUTE_JSON,  # auto route
-        "审查框架": VERDICT_JSON_UNSATISFIED,  # Phase 1
+        "审查框架": VERDICT_JSON_UNSATISFIED,  # Phase 1 / blind final
         "辩论阶段": "我坚持存在量化指标缺失问题",  # Phase 2
         "辩论已结束": VERDICT_JSON_UNSATISFIED,  # Phase 3
     }
@@ -54,7 +47,7 @@ class TestInputs:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "需求: 系统支持高并发",
+                "review", "--llm", "litellm", "--content", "需求: 系统支持高并发",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -75,7 +68,7 @@ class TestInputs:
         result = runner.invoke(
             app,
             [
-                "review", "--file", str(doc),
+                "review", "--llm", "litellm", "--file", str(doc),
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -97,7 +90,7 @@ class TestInputs:
         result = runner.invoke(
             app,
             [
-                "review", "--file", str(verdict_file),
+                "review", "--llm", "litellm", "--file", str(verdict_file),
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -112,7 +105,7 @@ class TestInputs:
         result = runner.invoke(
             app,
             [
-                "review",
+                "review", "--llm", "litellm",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -130,7 +123,7 @@ class TestInputs:
         result = runner.invoke(
             app,
             [
-                "review",
+                "review", "--llm", "litellm",
                 "--reviewers-dir", str(REVIEWERS_DIR),
             ],
         )
@@ -141,7 +134,7 @@ class TestInputs:
         result = runner.invoke(
             app,
             [
-                "review",
+                "review", "--llm", "litellm",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -154,27 +147,82 @@ class TestInputs:
 
 
 class TestFlowDecision:
-    def test_zero_param_auto_routing(self, tmp_path, install_mock_broker):
-        # zero flow params → L1 auto route; route recorded in JSON (FR-2)
+    def test_zero_param_progressive_early_stop(self, tmp_path, install_mock_broker):
+        # zero flow params → progressive sentinel-gated review (FR-2);
+        # clean high-confidence sentinel pass → early stop, exactly 1 call
         doc = tmp_path / "spec.md"
-        doc.write_text("# 规格文档\n较长的规格内容……", encoding="utf-8")
-        install_mock_broker(MockLLM(responses=_base_responses()))
+        doc.write_text("# 规格文档\n清晰完整的内容。", encoding="utf-8")
+        mock = MockLLM(responses={"审查框架": VERDICT_JSON_SATISFIED})
+        install_mock_broker(mock)
         result = runner.invoke(
             app,
             [
-                "review", "--file", str(doc),
+                "review", "--llm", "litellm", "--file", str(doc),
                 "--reviewers-dir", str(REVIEWERS_DIR),
                 "-o", "json",
             ],
         )
         assert result.exit_code == 0, result.output
         payload = json.loads(result.stdout)
-        assert payload["route"]["profile"] == "standard"
-        assert payload["route"]["reviewer_names"] == ["spec-reviewer", "design-reviewer"]
-        assert payload["route"]["reason"] == "常规规格文档"
-        # standard: 2 reviewers × 1 debate round → full debate happened
-        assert len(payload["debate_rounds"]) == 1
-        assert len(payload["individual_verdicts"]) == 2
+        route = payload["route"]
+        assert route["profile"] == "fast"
+        assert route["early_stopped"] is True
+        assert route["token_count"] > 0
+        assert route["complexity"] == "low"
+        assert route["reviewer_names"] == ["spec-reviewer"]  # filename hint → sentinel
+        assert len(payload["individual_verdicts"]) == 1
+        assert payload["debate_rounds"] == []
+        assert payload["stability_degraded"] is True
+        assert mock.call_count == 1
+
+    def test_zero_param_progressive_escalation(self, tmp_path, install_mock_broker):
+        # sentinel fails gate 1 → panel expansion → gate 2 (critical → thorough)
+        doc = tmp_path / "spec.md"
+        doc.write_text("# 规格文档\n有问题的内容。", encoding="utf-8")
+        mock = MockLLM(responses=_base_responses())
+        install_mock_broker(mock)
+        result = runner.invoke(
+            app,
+            [
+                "review", "--llm", "litellm", "--file", str(doc),
+                "--reviewers-dir", str(REVIEWERS_DIR),
+                "-o", "json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        route = payload["route"]
+        assert route["profile"] == "thorough"
+        assert route["early_stopped"] is False
+        assert route["reviewer_names"][0] == "spec-reviewer"  # sentinel kept
+        assert len(route["reviewer_names"]) == 3  # expanded panel
+        assert len(payload["individual_verdicts"]) == 3  # sentinel verdict kept + 2
+        assert len(payload["debate_rounds"]) == 2  # thorough continuation
+        assert "meta_review" in payload  # thorough → review_depth 1
+        # (B-4) explicit calibration: 0.85 × (1 − 0.5) via the meta penalty
+        assert payload["verdict"]["calibrated_confidence"] == 0.425
+
+    def test_partial_params_filled_deterministically(self, tmp_path, install_mock_broker):
+        # -r given but no rounds/depth → standard defaults, no LLM routing,
+        # no route record; single reviewer → fast-check form (no debate)
+        doc = tmp_path / "spec.md"
+        doc.write_text("# 规格文档", encoding="utf-8")
+        install_mock_broker(MockLLM(responses=_base_responses()))
+        result = runner.invoke(
+            app,
+            [
+                "review", "--llm", "litellm", "--file", str(doc),
+                "-r", "spec-reviewer",
+                "--reviewers-dir", str(REVIEWERS_DIR),
+                "-o", "json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert "route" not in payload  # deterministic fill leaves no route record
+        assert len(payload["individual_verdicts"]) == 1
+        assert payload["debate_rounds"] == []
+        assert payload["stability_degraded"] is True
 
     def test_profile_fast_skips_routing(self, tmp_path, install_mock_broker):
         doc = tmp_path / "spec.md"
@@ -183,7 +231,7 @@ class TestFlowDecision:
         result = runner.invoke(
             app,
             [
-                "review", "--file", str(doc),
+                "review", "--llm", "litellm", "--file", str(doc),
                 "--profile", "fast",
                 "--reviewers-dir", str(REVIEWERS_DIR),
                 "-o", "json",
@@ -199,18 +247,11 @@ class TestFlowDecision:
     def test_profile_thorough_includes_meta_review(self, tmp_path, install_mock_broker):
         doc = tmp_path / "spec.md"
         doc.write_text("# 复杂交付物内容", encoding="utf-8")
-        responses = _base_responses()
-        # thorough profile picks 3 reviewers; meta review adds meta-reviewers
-        responses["审查流程路由器"] = (
-            '{"content_type": "spec", "complexity": "high", "profile": "thorough",'
-            ' "reviewer_names": ["spec-reviewer", "design-reviewer",'
-            ' "test-plan-reviewer"], "reason": "关键交付"}'
-        )
-        install_mock_broker(MockLLM(responses=responses))
+        install_mock_broker(MockLLM(responses=_base_responses()))
         result = runner.invoke(
             app,
             [
-                "review", "--file", str(doc),
+                "review", "--llm", "litellm", "--file", str(doc),
                 "--profile", "thorough",
                 "--reviewers-dir", str(REVIEWERS_DIR),
                 "-o", "json",
@@ -230,7 +271,7 @@ class TestFlowDecision:
         result = runner.invoke(
             app,
             [
-                "review", "--file", str(doc),
+                "review", "--llm", "litellm", "--file", str(doc),
                 "--profile", "ultra",
                 "--reviewers-dir", str(REVIEWERS_DIR),
             ],
@@ -242,7 +283,7 @@ class TestFlowDecision:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "x",
+                "review", "--llm", "litellm", "--content", "x",
                 "-r", "spec-reviewer",
                 "--review-depth", "3",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -259,7 +300,7 @@ class TestOutput:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "测试内容",
+                "review", "--llm", "litellm", "--content", "测试内容",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -281,7 +322,7 @@ class TestOutput:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "测试内容",
+                "review", "--llm", "litellm", "--content", "测试内容",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -298,7 +339,7 @@ class TestOutput:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "测试",
+                "review", "--llm", "litellm", "--content", "测试",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -315,7 +356,7 @@ class TestOutput:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "测试",
+                "review", "--llm", "litellm", "--content", "测试",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -338,7 +379,7 @@ class TestInteractive:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "低置信度内容",
+                "review", "--llm", "litellm", "--content", "低置信度内容",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -358,7 +399,7 @@ class TestInteractive:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "高置信度内容",
+                "review", "--llm", "litellm", "--content", "高置信度内容",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -454,7 +495,7 @@ class TestSkillsCli:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "API 契约定义……",
+                "review", "--llm", "litellm", "--content", "API 契约定义……",
                 "-r", "skill:api-contract-review",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -473,7 +514,7 @@ class TestSkillsCli:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "x",
+                "review", "--llm", "litellm", "--content", "x",
                 "-r", "skill:ghost",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -483,6 +524,189 @@ class TestSkillsCli:
         )
         assert result.exit_code == 1
         assert "ghost" in result.output
+
+
+class TestAgentMode:
+    """v2 default executor: prepare/resume driven by judge-manager (FR-11)."""
+
+    def test_prepare_emits_task_manifest(self, tmp_path):
+        doc = tmp_path / "spec.md"
+        doc.write_text("# 规格\n系统需支持 10000 QPS。", encoding="utf-8")
+        run = tmp_path / "run"
+        result = runner.invoke(
+            app,
+            [
+                "review", "--file", str(doc),
+                "--run-dir", str(run),
+                "--reviewers-dir", str(REVIEWERS_DIR),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        manifest = json.loads(result.stdout)
+        assert manifest["done"] is False
+        assert manifest["stage"] == "awaiting_sentinel"
+        assert len(manifest["tasks"]) == 1
+        task = manifest["tasks"][0]
+        assert task["agent"] == "spec-reviewer"  # filename hint → sentinel
+        assert task["prompt_file"] == "tasks/p1-spec-reviewer-v1.md"
+        # run-dir artifacts: state + verbatim prompt + input snapshot
+        assert (run / "state.json").is_file()
+        prompt = (run / "tasks" / "p1-spec-reviewer-v1.md").read_text(encoding="utf-8")
+        assert "10000 QPS" in prompt  # verbatim content
+        assert "检查清单" in prompt
+        assert "系统需支持" in (run / "input" / "content.md").read_text(encoding="utf-8")
+
+    def test_resume_early_stop_produces_verdict(self, tmp_path):
+        doc = tmp_path / "spec.md"
+        doc.write_text("# 规格\n内容", encoding="utf-8")
+        run = tmp_path / "run"
+        result = runner.invoke(
+            app,
+            [
+                "review", "--file", str(doc),
+                "--run-dir", str(run),
+                "--reviewers-dir", str(REVIEWERS_DIR),
+            ],
+        )
+        assert result.exit_code == 0
+        # driver writes the sentinel agent's raw reply
+        (run / "results").mkdir(exist_ok=True)
+        (run / "results" / "p1-spec-reviewer-v1.md").write_text(
+            VERDICT_JSON_SATISFIED, encoding="utf-8"
+        )
+        result = runner.invoke(
+            app,
+            [
+                "review", "--resume", "--run-dir", str(run),
+                "--reviewers-dir", str(REVIEWERS_DIR),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["done"] is True
+        assert payload["stage"] == "done"
+        verdict = json.loads((run / "verdict.json").read_text(encoding="utf-8"))
+        assert verdict["verdict"]["severity"] == "pass"
+        assert verdict["verdict"]["escalate_to_human"] is False
+        assert verdict["route"]["profile"] == "fast"
+        assert verdict["route"]["early_stopped"] is True
+        assert "对抗审查报告" in (run / "report.md").read_text(encoding="utf-8")
+
+    def test_resume_expansion_then_thorough(self, tmp_path):
+        doc = tmp_path / "spec.md"
+        doc.write_text("# 规格\n有问题", encoding="utf-8")
+        run = tmp_path / "run"
+        args = ["--reviewers-dir", str(REVIEWERS_DIR)]
+        result = runner.invoke(
+            app, ["review", "--file", str(doc), "--run-dir", str(run), *args]
+        )
+        assert result.exit_code == 0
+        results_dir = run / "results"
+        results_dir.mkdir(exist_ok=True)
+
+        def _feed(manifest):
+            for t in manifest["tasks"]:
+                if not (results_dir / f"{t['task_id']}.md").exists():
+                    (results_dir / f"{t['task_id']}.md").write_text(
+                        VERDICT_JSON_UNSATISFIED, encoding="utf-8"
+                    )
+
+        # drive until done (sentinel fail → expansion → debate×2 → final → meta)
+        for _ in range(8):
+            manifest = json.loads(result.stdout)
+            if manifest["done"]:
+                break
+            _feed(manifest)
+            result = runner.invoke(
+                app, ["review", "--resume", "--run-dir", str(run), *args]
+            )
+            assert result.exit_code == 0, result.output
+        manifest = json.loads(result.stdout)
+        assert manifest["done"] is True
+
+        verdict = json.loads((run / "verdict.json").read_text(encoding="utf-8"))
+        assert verdict["route"]["profile"] == "thorough"
+        assert len(verdict["route"]["reviewer_names"]) == 3
+        assert verdict["verdict"]["severity"] == "critical"
+        # full pipeline artifacts present
+        assert len(verdict["individual_verdicts"]) == 3
+        assert len(verdict["debate_rounds"]) == 2
+        assert "meta_review" in verdict
+        assert verdict["verdict"]["calibrated_confidence"] is not None
+
+    def test_resume_requires_run_dir(self):
+        result = runner.invoke(
+            app, ["review", "--resume", "--reviewers-dir", str(REVIEWERS_DIR)]
+        )
+        assert result.exit_code == 1
+        assert "--run-dir" in result.output
+
+    def test_prepare_on_existing_run_errors(self, tmp_path):
+        doc = tmp_path / "s.md"
+        doc.write_text("x", encoding="utf-8")
+        run = tmp_path / "run"
+        result = runner.invoke(
+            app,
+            ["review", "--file", str(doc), "--run-dir", str(run),
+             "--reviewers-dir", str(REVIEWERS_DIR)],
+        )
+        assert result.exit_code == 0
+        result = runner.invoke(
+            app,
+            ["review", "--file", str(doc), "--run-dir", str(run),
+             "--reviewers-dir", str(REVIEWERS_DIR)],
+        )
+        assert result.exit_code == 1
+        assert "--resume" in result.output
+
+    def test_skill_adhoc_rejected_in_agent_mode(self, tmp_path):
+        doc = tmp_path / "api.md"
+        doc.write_text("x", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            [
+                "review", "--file", str(doc),
+                "-r", "skill:api-contract-review",
+                "--run-dir", str(tmp_path / "run"),
+                "--reviewers-dir", str(REVIEWERS_DIR),
+                "--skills-dir", str(SKILLS_DIR),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "litellm" in result.output  # suggests the direct mode
+
+    def test_unknown_llm_mode_errors(self, tmp_path):
+        doc = tmp_path / "s.md"
+        doc.write_text("x", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            [
+                "review", "--file", str(doc), "--llm", "wat",
+                "--reviewers-dir", str(REVIEWERS_DIR),
+            ],
+        )
+        assert result.exit_code == 1
+
+    def test_fixed_params_prepare_full_panel(self, tmp_path):
+        doc = tmp_path / "spec.md"
+        doc.write_text("# 规格", encoding="utf-8")
+        run = tmp_path / "run"
+        result = runner.invoke(
+            app,
+            [
+                "review", "--file", str(doc),
+                "-r", "spec-reviewer", "-r", "design-reviewer",
+                "--debate-rounds", "1",
+                "--run-dir", str(run),
+                "--reviewers-dir", str(REVIEWERS_DIR),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        manifest = json.loads(result.stdout)
+        assert manifest["stage"] == "awaiting_panel"
+        assert {t["agent"] for t in manifest["tasks"]} == {
+            "spec-reviewer", "design-reviewer"
+        }
 
 
 class TestBaseUrl:
@@ -499,7 +723,7 @@ class TestBaseUrl:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "本地模型测试",
+                "review", "--llm", "litellm", "--content", "本地模型测试",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -529,7 +753,7 @@ class TestCredentialHint:
         return runner.invoke(
             app,
             [
-                "review", "--content", "凭证提示测试",
+                "review", "--llm", "litellm", "--content", "凭证提示测试",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -559,7 +783,7 @@ class TestCredentialHint:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "本地模型",
+                "review", "--llm", "litellm", "--content", "本地模型",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
@@ -578,7 +802,7 @@ class TestReviewDepthTwo:
         result = runner.invoke(
             app,
             [
-                "review", "--content", "关键交付物",
+                "review", "--llm", "litellm", "--content", "关键交付物",
                 "-r", "spec-reviewer",
                 "--debate-rounds", "0",
                 "--review-depth", "2",

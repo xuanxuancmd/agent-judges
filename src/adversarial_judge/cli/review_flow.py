@@ -1,7 +1,12 @@
 """Pure helpers for the review command: input loading and the three-tier
-flow decision (design.md 4.8) — kept free of typer so they stay unit-testable.
+flow decision — kept free of typer so they stay unit-testable.
 
-Three-tier decision: explicit fine-grained params > ``--profile`` > auto route.
+Three-tier decision (revised): explicit fine-grained params > ``--profile``
+> progressive review (sentinel-gated; see ``progressive.py``).
+Zero-parameter calls no longer pre-classify content with an LLM — the
+sentinel review and deterministic gates decide the flow strength from
+measured Phase-1 results. Partial manual params (e.g. only ``-r``) are
+filled deterministically with standard defaults.
 """
 
 from __future__ import annotations
@@ -11,10 +16,20 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..llm.broker import LLMBroker
-from ..router import PROFILE_MAP, RouteDecision, generic_reviewer_combo, route
+from ..router import (
+    PROFILE_MAP,
+    RouteDecision,
+    deterministic_panel,
+    generic_reviewer_combo,
+)
 
-__all__ = ["FlowRequest", "ResolvedFlow", "FlowError", "load_review_content", "resolve_flow"]
+__all__ = [
+    "FlowRequest",
+    "ResolvedFlow",
+    "FlowError",
+    "load_review_content",
+    "resolve_flow",
+]
 
 
 class FlowError(ValueError):
@@ -35,6 +50,7 @@ class FlowRequest:
     profile: str | None = None
     review_content: str = ""
     available: list[str] = field(default_factory=list)
+    filename: str | None = None  # --file basename (deterministic classification)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +60,8 @@ class ResolvedFlow:
     reviewers: list[str]
     debate_rounds: int
     review_depth: int
-    route_decision: RouteDecision | None  # None = fully manual, no routing
+    route_decision: RouteDecision | None  # None = fully manual or progressive
+    progressive: bool = False  # sentinel-gated mode: params decided mid-run
 
 
 def load_review_content(
@@ -76,48 +93,73 @@ def load_review_content(
     return "", False
 
 
-def resolve_flow(request: FlowRequest, broker: LLMBroker) -> ResolvedFlow:
-    """Three-tier flow decision: manual > explicit profile > auto route."""
+def resolve_flow(request: FlowRequest) -> ResolvedFlow:
+    """Flow decision: manual > explicit profile > progressive > deterministic fill."""
     if not request.available:
         raise FlowError("reviewers 目录中无可用(非 meta-)reviewer 模板。")
 
-    route_decision: RouteDecision | None = None
-    reviewers = request.reviewers
+    # zero flow params at all → progressive sentinel-gated mode; the panel,
+    # rounds and depth are decided by the gates after Phase 1
+    if (
+        request.reviewers is None
+        and request.profile is None
+        and request.debate_rounds is None
+        and request.review_depth is None
+    ):
+        return ResolvedFlow(
+            reviewers=[],
+            debate_rounds=0,
+            review_depth=0,
+            route_decision=None,
+            progressive=True,
+        )
 
-    if reviewers and request.debate_rounds is not None and request.review_depth is not None:
-        pass  # fully manual: no routing needed
-    elif request.profile is not None:
+    if request.profile is not None:
         if request.profile not in PROFILE_MAP:
-            raise FlowError(f"未知 profile '{request.profile}'。可用: {list(PROFILE_MAP)}")
+            raise FlowError(
+                f"未知 profile '{request.profile}'。可用: {list(PROFILE_MAP)}"
+            )
         settings = PROFILE_MAP[request.profile]
         route_decision = RouteDecision(
             content_type="other",
             complexity="medium",
             profile=request.profile,
-            reviewer_names=reviewers
+            reviewer_names=request.reviewers
             or generic_reviewer_combo(request.available, settings["reviewers"]),
             reason=f"explicit profile: {request.profile}",
         )
-    else:
-        # zero-decision: auto route (one lightweight LLM classification)
-        route_decision = route(broker, request.review_content, request.available)
+        return ResolvedFlow(
+            reviewers=route_decision.reviewer_names,
+            debate_rounds=(
+                request.debate_rounds
+                if request.debate_rounds is not None
+                else settings["debate_rounds"]
+            ),
+            review_depth=(
+                request.review_depth
+                if request.review_depth is not None
+                else int(settings["meta_review"])
+            ),
+            route_decision=route_decision,
+        )
 
-    debate_rounds = request.debate_rounds
-    review_depth = request.review_depth
-    if route_decision is not None:
-        if not reviewers:
-            reviewers = route_decision.reviewer_names
-        if debate_rounds is None:
-            debate_rounds = PROFILE_MAP[route_decision.profile]["debate_rounds"]
-        if review_depth is None:
-            review_depth = int(PROFILE_MAP[route_decision.profile]["meta_review"])
-
-    if not reviewers:
-        raise FlowError("未解析出任何 reviewer(请检查 -r 参数或路由结果)。")
-
+    # partial manual params: fill gaps deterministically (no LLM call)
+    reviewers = request.reviewers
+    if reviewers is None:
+        _, panel = deterministic_panel(
+            request.available,
+            PROFILE_MAP["standard"]["reviewers"],
+            filename=request.filename,
+            content=request.review_content,
+        )
+        reviewers = panel
     return ResolvedFlow(
         reviewers=reviewers,
-        debate_rounds=debate_rounds or 0,
-        review_depth=review_depth or 0,
-        route_decision=route_decision,
+        debate_rounds=(
+            request.debate_rounds
+            if request.debate_rounds is not None
+            else PROFILE_MAP["standard"]["debate_rounds"]
+        ),
+        review_depth=request.review_depth or 0,
+        route_decision=None,
     )

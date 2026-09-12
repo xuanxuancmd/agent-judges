@@ -1,4 +1,4 @@
-"""``aj review`` — the main adversarial-review command (FR-5).
+"""``agent-judges review`` — the main adversarial-review command (FR-5).
 
 The typer signature is declarative option wiring; behaviour lives in
 ``review_flow`` (input + flow decision) and the domain modules.
@@ -90,7 +90,18 @@ def review(
     interactive: bool = typer.Option(
         False,
         "--interactive",
-        help="低置信度时暂停等待 stdin 人工裁决(不可与 stdin 管道输入内容同用)",
+        help="低置信度时暂停等待 stdin 人工裁决(仅 --llm litellm 模式)",
+    ),
+    llm_backend: str = typer.Option(
+        "agent",
+        "--llm",
+        help="执行模式: agent(默认,prepare/resume 由宿主 judge-manager 驱动) | litellm(引擎进程内直连,CI/调试用)",
+    ),
+    run_dir: Path | None = typer.Option(
+        None, "--run-dir", help="运行目录(agent 模式;prepare 时缺省自动创建)"
+    ),
+    resume: bool = typer.Option(
+        False, "--resume", help="从运行目录恢复推进(agent 模式,需 --run-dir)"
     ),
 ):
     """对抗审查: 对 AI 生成的内容进行多 agent 辩论式审查"""
@@ -105,8 +116,9 @@ def review(
         review_depth = max(review_depth or 0, 1)
 
     # ---- input: --content / --file / stdin ---------------------------
+    # (--resume skips input entirely: the content snapshot lives in the run dir)
     review_content, content_from_stdin = load_review_content(content, content_file)
-    if not review_content.strip():
+    if not resume and not review_content.strip():
         _echo_err("Error: 无审查内容。请通过 --content / --file / stdin 传入。")
         raise typer.Exit(1)
     if interactive and content_from_stdin:
@@ -128,6 +140,33 @@ def review(
         _echo_err(f"Error: {e}")
         raise typer.Exit(1) from e
 
+    # ---- agent-driven mode (v2 default, FR-5/FR-11) ----------------------
+    if llm_backend == "agent":
+        from .agent_review import run_agent_review
+
+        run_agent_review(
+            registry=registry,
+            reviewers_dir=reviewers_dir,
+            content=review_content,
+            filename=content_file.name if content_file else None,
+            context=context,
+            profile=profile,
+            reviewers=reviewers,
+            debate_rounds=debate_rounds,
+            review_depth=review_depth,
+            meta_review=meta_review,
+            threshold=confidence_threshold,
+            run_dir_opt=run_dir,
+            resume=resume,
+            output_format=output_format,
+            output_dir=output_dir,
+        )
+        return
+    if llm_backend != "litellm":
+        _echo_err(f"Error: 未知 --llm 模式 '{llm_backend}'。可用: agent | litellm")
+        raise typer.Exit(1)
+
+    # ---- legacy direct mode (--llm litellm, CI/调试) ----------------------
     effective_model = override_model or model
     broker = LLMBroker(
         default_model=effective_model,
@@ -135,14 +174,14 @@ def review(
         max_budget_usd=max_cost,  # api_key=None: litellm resolves per-provider env keys
     )
 
-    # credential hint: aj normally inherits the calling agent session's env
+    # credential hint: the CLI normally inherits the calling agent session's env
     if is_host_provider(effective_model) and not (
         env_api_key(effective_model) or base_url
     ):
         _echo_err(
             f"Warning: 未检测到 {effective_model} 的凭证"
             f"(ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN/CLAUDE_CODE_OAUTH_TOKEN/"
-            f"OPENAI_API_KEY)。aj 由 Claude Code / OpenCode 会话调用时凭证自动继承"
+            f"OPENAI_API_KEY)。agent-judges 由 Claude Code / OpenCode 会话调用时凭证自动继承"
             f"(Pro/Max 订阅登录除外,需 claude setup-token 或显式配置);"
             f"独立运行请配置环境变量或 .env,或用 --base-url 指向本地网关。"
         )
@@ -160,6 +199,8 @@ def review(
         # skills are routable as ad-hoc reviewers (skill:<name>)
         available += [f"skill:{s.name}" for s in registry.skills.list_all()]
 
+    filename = content_file.name if content_file else None
+
     try:
         flow = resolve_flow(
             FlowRequest(
@@ -169,8 +210,8 @@ def review(
                 profile=profile,
                 review_content=review_content,
                 available=available,
+                filename=filename,
             ),
-            broker,
         )
     except FlowError as e:
         _echo_err(f"Error: {e.message}")
@@ -180,50 +221,70 @@ def review(
         decision = flow.route_decision
         if decision.reason.startswith("explicit"):
             _echo_err(f"profile: {decision.profile} 档, reviewer={decision.reviewer_names}")
-        else:
-            _echo_err(
-                f"auto 路由: {decision.profile} 档, "
-                f"reviewer={decision.reviewer_names}, 理由: {decision.reason}"
-            )
-
-    # pre-validate reviewer/skill names → clean CLI error, not a traceback
-    for name in flow.reviewers:
-        try:
-            registry.get(name)
-        except KeyError as e:
-            _echo_err(f"Error: {e}")
-            raise typer.Exit(1) from e
-
-    _echo_err(
-        f"使用 reviewer: {flow.reviewers} | 辩论轮次: {flow.debate_rounds} "
-        f"| 元审查深度: {flow.review_depth}"
-    )
 
     # meta review requires meta-reviewer templates to exist
-    if flow.review_depth >= 1:
-        missing = [
-            n
-            for n in MetaReviewer.DEFAULT_META_REVIEWERS
-            if n not in registry.reviewers
-        ]
-        if missing:
-            _echo_err(f"Error: 元审查需要模板 {missing}(在 {reviewers_dir} 中未找到)。")
-            raise typer.Exit(1)
+    meta_missing = [
+        n
+        for n in MetaReviewer.DEFAULT_META_REVIEWERS
+        if n not in registry.reviewers
+    ]
 
-    # ---- run the debate ------------------------------------------------
+    route_decision = flow.route_decision
     orchestrator = DebateOrchestrator(
         registry=registry,
         broker=broker,
         debate_rounds=flow.debate_rounds,
     )
-    result = orchestrator.run(
-        content=review_content, reviewer_names=flow.reviewers, context=context
-    )
+
+    # ---- run the debate ------------------------------------------------
+    if flow.progressive:
+        # zero flow params: sentinel-gated progressive review (FR-2)
+        result, prog = orchestrator.run_progressive(
+            content=review_content,
+            context=context,
+            filename=filename,
+            candidates=available,
+            max_tier="thorough" if not meta_missing else "standard",
+        )
+        route_decision = prog.to_route_decision()
+        review_depth = prog.review_depth
+        _echo_err(f"渐进式审查: {prog.reason}")
+        _echo_err(
+            f"使用 reviewer: {prog.reviewers} | 辩论轮次: {prog.debate_rounds} "
+            f"| 元审查深度: {review_depth}"
+        )
+    else:
+        # pre-validate reviewer/skill names → clean CLI error, not a traceback
+        for name in flow.reviewers:
+            try:
+                registry.get(name)
+            except KeyError as e:
+                _echo_err(f"Error: {e}")
+                raise typer.Exit(1) from e
+
+        _echo_err(
+            f"使用 reviewer: {flow.reviewers} | 辩论轮次: {flow.debate_rounds} "
+            f"| 元审查深度: {flow.review_depth}"
+        )
+
+        if flow.review_depth >= 1 and meta_missing:
+            _echo_err(
+                f"Error: 元审查需要模板 {meta_missing}(在 {reviewers_dir} 中未找到)。"
+            )
+            raise typer.Exit(1)
+
+        result = orchestrator.run(
+            content=review_content,
+            reviewer_names=flow.reviewers,
+            context=context,
+            filename=filename,
+        )
+        review_depth = flow.review_depth
 
     # ---- meta review (FR-8), recursive depth control --------------------
     meta_result = None
     current_depth = 0
-    while current_depth < flow.review_depth:
+    while current_depth < review_depth:
         result.final_verdict, meta_result = MetaReviewer(orchestrator).review(
             original_content=review_content,
             original_verdict=result.final_verdict,
@@ -271,13 +332,13 @@ def review(
 
     if output_format in ("markdown", "both"):
         md = render_markdown(
-            result, confidence_threshold, meta_result, flow.route_decision
+            result, confidence_threshold, meta_result, route_decision
         )
         if output_format == "markdown":
             print(md)
     if output_format in ("json", "both"):
         json_out = render_json(
-            result, confidence_threshold, meta_result, broker, flow.route_decision
+            result, confidence_threshold, meta_result, broker, route_decision
         )
         if output_format == "json":
             print(json_out)

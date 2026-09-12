@@ -12,7 +12,7 @@ benchmark layout:
 - :func:`build_pairs` / :func:`accuracy` / :func:`mean_confidence` —
   evaluation pipeline helpers.
 - :func:`load_judgement_records` / :func:`format_evaluation_report` —
-  CLI-facing entry points behind ``aj evaluate``.
+  CLI-facing entry points behind ``agent-judges evaluate``.
 
 See ``reports/technical_guide_confidence_estimation.md`` (upstream) for the
 methodology: AUROC degradation diagnosis and calibration checks.
@@ -65,7 +65,7 @@ def load_judgement_records(path: Path) -> tuple[list[dict], list[dict]]:
 
 
 def format_evaluation_report(pairs: List[Pair]) -> str:
-    """Render the ``aj evaluate`` human-readable report."""
+    """Render the ``agent-judges evaluate`` human-readable report."""
     return "\n".join(
         [
             "置信度校准评估",

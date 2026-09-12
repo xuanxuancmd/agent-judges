@@ -1,30 +1,26 @@
-"""Auto-router tests: RouteDecision, PROFILE_MAP, fallbacks (plan 8-5)."""
+"""Router tests: RouteDecision, PROFILE_MAP, deterministic zero-LLM
+reviewer selection (classify_content / deterministic_panel)."""
 
 from __future__ import annotations
 
 import pytest
 
-from adversarial_judge.llm.broker import LLMBroker
 from adversarial_judge.router import (
     PROFILE_MAP,
     RouteDecision,
+    classify_content,
+    deterministic_panel,
     generic_reviewer_combo,
-    route,
 )
-
-from fixtures.mock_llm import MockLLM, MockLLMBroker
 
 AVAILABLE = [
     "spec-reviewer",
     "design-reviewer",
     "requirement-elicitation-reviewer",
+    "requirement-clarification-reviewer",
     "meta-reviewer",
     "meta-reviewer-2",
 ]
-
-
-def _broker_for(response: str):
-    return MockLLMBroker(MockLLM(responses={"审查流程路由器": response}))
 
 
 class TestProfileMap:
@@ -48,53 +44,8 @@ class TestProfileMap:
         assert p["meta_review"] is True
 
 
-class TestRoute:
-    def test_valid_json_response(self):
-        broker = _broker_for(
-            '{"content_type": "spec", "complexity": "high", "profile": "thorough",'
-            ' "reviewer_names": ["spec-reviewer", "design-reviewer",'
-            ' "requirement-elicitation-reviewer"], "reason": "复杂规格文档"}'
-        )
-        d = route(broker, "长规格文档内容", AVAILABLE)
-        assert isinstance(d, RouteDecision)
-        assert d.profile == "thorough"
-        assert d.content_type == "spec"
-        assert d.reason == "复杂规格文档"
-        assert d.reviewer_names == [
-            "spec-reviewer",
-            "design-reviewer",
-            "requirement-elicitation-reviewer",
-        ]
-
-    def test_fenced_json_response(self):
-        broker = _broker_for(
-            '```json\n{"content_type": "requirement", "complexity": "low",'
-            ' "profile": "fast", "reviewer_names": ["spec-reviewer"],'
-            ' "reason": "短文本"}\n```'
-        )
-        d = route(broker, "短需求", AVAILABLE)
-        assert d.profile == "fast"
-        assert d.reviewer_names == ["spec-reviewer"]
-
-    def test_unknown_reviewers_filtered(self):
-        broker = _broker_for(
-            '{"profile": "standard", "reviewer_names": ["ghost-reviewer",'
-            ' "spec-reviewer"], "reason": "r"}'
-        )
-        d = route(broker, "content", AVAILABLE)
-        assert d.reviewer_names == ["spec-reviewer"]  # ghost filtered out
-
-    def test_reviewer_count_capped_to_profile(self):
-        broker = _broker_for(
-            '{"profile": "fast", "reviewer_names": ["spec-reviewer",'
-            ' "design-reviewer", "requirement-elicitation-reviewer"],'
-            ' "reason": "r"}'
-        )
-        d = route(broker, "content", AVAILABLE)
-        assert len(d.reviewer_names) == 1  # fast caps at 1
-
+class TestGenericCombo:
     def test_meta_reviewers_never_selected_by_default(self):
-        # generic combo excludes meta-*
         combo = generic_reviewer_combo(AVAILABLE, 3)
         assert not any(n.startswith("meta-") for n in combo)
         assert combo == [
@@ -103,42 +54,85 @@ class TestRoute:
             "requirement-elicitation-reviewer",
         ]
 
-    def test_garbage_response_falls_back_to_standard(self):
-        broker = _broker_for("完全不是 JSON 的回复")
-        d = route(broker, "content", AVAILABLE)
-        assert d.profile == "standard"
-        assert len(d.reviewer_names) == 2
-        assert "fallback" in d.reason or "degraded" in d.reason
+    def test_count_respected(self):
+        assert generic_reviewer_combo(AVAILABLE, 2) == AVAILABLE[:2]
 
-    def test_invalid_profile_falls_back_to_standard(self):
-        broker = _broker_for(
-            '{"profile": "ultra", "reviewer_names": ["spec-reviewer"], "reason": "r"}'
+
+class TestClassifyContent:
+    def test_spec_filename(self):
+        content_type, preferred = classify_content("spec.md", "任何内容")
+        assert content_type == "spec"
+        assert preferred == ["spec-reviewer"]
+
+    def test_design_filename(self):
+        content_type, preferred = classify_content("design.md", "")
+        assert content_type == "design"
+        assert preferred == ["design-reviewer"]
+
+    def test_content_heading(self):
+        content_type, preferred = classify_content(None, "# 系统设计文档\n正文")
+        assert content_type == "design"
+        assert preferred == ["design-reviewer"]
+
+    def test_filename_beats_content(self):
+        # filename is the stronger signal: spec.md wins over 设计 in content
+        content_type, _ = classify_content("spec.md", "# 系统设计文档")
+        assert content_type == "spec"
+
+    def test_feature_file_routes_to_test(self):
+        content_type, preferred = classify_content("login.feature", "Feature: ...")
+        assert content_type == "test"
+        assert preferred[0] == "integration-test-reviewer"
+
+    def test_no_match_returns_other(self):
+        assert classify_content("notes.txt", "random words") == ("other", [])
+
+    def test_empty_inputs(self):
+        assert classify_content(None, "") == ("other", [])
+
+
+class TestDeterministicPanel:
+    def test_preferred_reviewer_is_sentinel(self):
+        content_type, panel = deterministic_panel(
+            AVAILABLE, 3, filename="spec.md", content="x"
         )
-        d = route(broker, "content", AVAILABLE)
-        assert d.profile == "standard"
+        assert content_type == "spec"
+        assert panel[0] == "spec-reviewer"  # sentinel position
 
-    def test_llm_failure_falls_back_to_standard(self):
-        broker = MockLLMBroker(
-            MockLLM(raise_on={"审查流程路由器": RuntimeError("api down")})
+    def test_filled_to_size_without_meta(self):
+        _, panel = deterministic_panel(AVAILABLE, 3, filename="spec.md")
+        assert len(panel) == 3
+        assert not any(n.startswith("meta-") for n in panel)
+
+    def test_unavailable_preferred_falls_back_to_generic(self):
+        content_type, panel = deterministic_panel(
+            ["design-reviewer", "meta-reviewer"], 2, filename="spec.md"
         )
-        d = route(broker, "content", AVAILABLE)
-        assert d.profile == "standard"
-        assert "failed" in d.reason
+        assert content_type == "spec"  # classification still reported
+        assert panel == ["design-reviewer"]  # spec-reviewer not in pool → skipped
 
-    def test_empty_reviewer_names_falls_back_to_combo(self):
-        broker = _broker_for('{"profile": "fast", "reviewer_names": []}')
-        d = route(broker, "content", AVAILABLE)
-        assert len(d.reviewer_names) == 1
+    def test_size_one_returns_single_sentinel(self):
+        _, panel = deterministic_panel(AVAILABLE, 1, filename="spec.md")
+        assert panel == ["spec-reviewer"]
+
+    def test_content_hint_selects_panel(self):
+        _, panel = deterministic_panel(AVAILABLE, 2, content="# 需求澄清清单")
+        assert panel[0] == "requirement-clarification-reviewer"
+        assert len(panel) == 2
 
 
 class TestRouteDecisionSchema:
     def test_profile_pattern_rejects_invalid(self):
         with pytest.raises(Exception):
-            RouteDecision(
-                profile="ultra", reviewer_names=["a"], reason="r"
-            )
+            RouteDecision(profile="ultra", reviewer_names=["a"], reason="r")
 
     def test_minimal_construction(self):
         d = RouteDecision(profile="fast", reviewer_names=["a"], reason="r")
         assert d.content_type == "other"
         assert d.complexity == "medium"
+
+    def test_progressive_audit_fields_default_off(self):
+        d = RouteDecision(profile="standard", reviewer_names=["a"], reason="r")
+        assert d.token_count is None
+        assert d.early_stopped is False
+        assert d.gate_reason is None

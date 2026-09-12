@@ -55,6 +55,7 @@ def test_integration_requirement_debate():
             "-r", "spec-reviewer",
             "--debate-rounds", "1",
             "--review-depth", "0",
+            "--llm", "litellm",  # in-process direct mode: one-shot JSON verdict
             "--reviewers-dir", str(REVIEWERS_DIR),
             "-o", "json",
         ],
@@ -77,6 +78,7 @@ def test_integration_implementation_review():
             "-r", "implementation-vs-requirement-reviewer",
             "--debate-rounds", "0",
             "--review-depth", "0",
+            "--llm", "litellm",
             "--reviewers-dir", str(REVIEWERS_DIR),
             "-o", "json",
         ],
@@ -95,6 +97,7 @@ def test_integration_meta_review_calibration():
             "-r", "spec-reviewer",
             "--debate-rounds", "0",
             "--meta-review",
+            "--llm", "litellm",
             "--reviewers-dir", str(REVIEWERS_DIR),
             "-o", "json",
         ],
@@ -108,12 +111,13 @@ def test_integration_meta_review_calibration():
     assert 0.0 <= v["calibrated_confidence"] <= 1.0
 
 
-def test_integration_zero_param_auto_route():
-    """场景 4: 零参数 auto 路由。"""
+def test_integration_zero_param_progressive():
+    """场景 4: 零参数渐进式审查(哨兵先行 + 结果驱动门控)。"""
     result = runner.invoke(
         app,
         [
             "review", "--content", CONTENT_REQUIREMENT,
+            "--llm", "litellm",
             "--reviewers-dir", str(REVIEWERS_DIR),
             "-o", "json",
         ],

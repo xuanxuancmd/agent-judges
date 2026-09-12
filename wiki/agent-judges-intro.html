@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="description" content="agent-judges:所有 AI 产出的东西,都需要被另一个(组)AI 对抗审查一遍。">
+<title>agent-judges · 所有 AI 产出,都必须被对抗审查</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;700&amp;family=Noto+Serif+SC:wght@700;900&amp;display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --paper: #ffffff;
+    --ink: #171a20;
+    --ink-2: #4b515c;
+    --ink-3: #656b76;
+    --line: #e2e5ea;
+    --line-strong: #c6cbd4;
+    --red: #c0362b;
+    --blue: #2f55c4;
+    --red-soft: #fbeeec;
+    --blue-soft: #eef2fc;
+    --code-bg: #14161b;
+    --serif: "Noto Serif SC", "Songti SC", "SimSun", serif;
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.8 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 44px; }
+  a { color: inherit; text-decoration: none; }
+  .mono { font-family: var(--mono); }
+
+  /* ---------- top bar ---------- */
+  .topbar { border-bottom: 1px solid var(--line); background: var(--bg); }
+  .topbar .wrap {
+    display: flex; justify-content: space-between; align-items: center;
+    height: 58px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em;
+  }
+  .topbar .brand { color: var(--ink); font-weight: 600; }
+  .topbar .brand em { font-style: normal; color: var(--red); }
+  .topbar nav { display: flex; gap: 26px; color: var(--ink-2); }
+  .topbar nav a:hover { color: var(--ink); }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 108px 0 92px; }
+  .kicker {
+    font-family: var(--mono); font-size: 13px; font-weight: 500;
+    letter-spacing: 0.05em; color: var(--ink-2); margin-bottom: 30px;
+  }
+  .kicker b { color: var(--red); font-weight: 600; }
+  h1 {
+    font-family: var(--serif); font-weight: 900;
+    font-size: clamp(44px, 6.4vw, 84px); line-height: 1.16; letter-spacing: 0.01em;
+  }
+  h1 em {
+    font-style: normal; color: var(--red);
+    border-bottom: 4px solid var(--red); padding-bottom: 2px;
+  }
+  .lede {
+    margin-top: 40px; max-width: 660px;
+    font-size: 18.5px; line-height: 1.95; color: var(--ink-2);
+  }
+  .lede strong { color: var(--ink); font-weight: 700; }
+  .stat-strip {
+    margin-top: 76px; display: grid; grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong);
+  }
+  .stat { padding: 26px 24px 22px 0; border-left: 1px solid var(--line); padding-left: 24px; }
+  .stat:first-child { border-left: none; padding-left: 0; }
+  .stat .num {
+    font-family: var(--mono); font-size: 40px; font-weight: 600; line-height: 1;
+    color: var(--ink); font-variant-numeric: tabular-nums;
+  }
+  .stat .num i { font-style: normal; font-size: 20px; color: var(--ink-3); }
+  .stat .cap { margin-top: 10px; font-size: 13px; color: var(--ink-3); letter-spacing: 0.02em; }
+
+  /* ---------- section frame ---------- */
+  section.block { padding: 92px 0 96px; }
+  section.block + section.block { border-top: 1px solid var(--line); }
+  .sec-kicker {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 500;
+    letter-spacing: 0.1em; color: var(--blue); margin-bottom: 14px;
+  }
+  h2 {
+    font-family: var(--serif); font-weight: 900;
+    font-size: clamp(30px, 3.4vw, 44px); line-height: 1.3; letter-spacing: 0.01em;
+  }
+
+  /* ---------- principles ---------- */
+  .principles { margin-top: 56px; }
+  .principle {
+    display: grid; grid-template-columns: 118px 1fr; gap: 28px;
+    padding: 36px 0; border-top: 1px solid var(--line);
+  }
+  .principle:last-child { border-bottom: 1px solid var(--line); }
+  .principle .no {
+    font-family: var(--mono); font-size: 14px; font-weight: 600;
+    color: var(--ink-3); padding-top: 7px; letter-spacing: 0.08em;
+  }
+  .principle .no b { color: var(--red); font-weight: 600; }
+  .principle h3 {
+    font-family: var(--serif); font-weight: 700; font-size: 23px;
+    line-height: 1.5; margin-bottom: 10px;
+  }
+  .principle p { max-width: 760px; font-size: 15.5px; color: var(--ink-2); }
+  .principle p code, .inline-code {
+    font-family: var(--mono); font-size: 0.88em; color: var(--blue);
+    background: var(--blue-soft); padding: 1px 6px; border-radius: 3px;
+  }
+
+  /* ---------- flow band ---------- */
+  .flow-band {
+    background: #eef0f4;
+    background-image:
+      linear-gradient(rgba(23, 26, 32, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(23, 26, 32, 0.045) 1px, transparent 1px);
+    background-size: 52px 52px;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  }
+  .flow-band section.block { padding: 88px 0 92px; }
+  .band-note { margin-top: 18px; max-width: 720px; font-size: 15px; color: var(--ink-2); }
+
+  /* gates stepper */
+  .gates {
+    margin-top: 54px; list-style: none;
+    display: flex; align-items: flex-start;
+  }
+  .gates .step { display: flex; flex-direction: column; gap: 8px; width: 172px; flex: none; }
+  .gates .g-tag {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.14em; color: var(--ink-3); text-transform: uppercase;
+  }
+  .gates .g-name { font-weight: 700; font-size: 15.5px; line-height: 1.45; }
+  .gates .gate .g-name { color: var(--blue); }
+  .gates .g-cap { font-size: 12.5px; line-height: 1.65; color: var(--ink-2); }
+  .gates .diamond {
+    width: 11px; height: 11px; border: 2px solid var(--blue);
+    transform: rotate(45deg); margin: 3px 0 4px 2px; background: var(--paper);
+  }
+  .gates .conn {
+    flex: 1 1 32px; min-width: 26px; height: 1px; background: var(--line-strong);
+    position: relative; margin-top: 40px;
+  }
+  .gates .conn::after {
+    content: ""; position: absolute; right: -1px; top: -3.5px;
+    border-left: 7px solid var(--line-strong);
+    border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  }
+  .gates .node .dot {
+    width: 9px; height: 9px; background: var(--ink); margin: 4px 0 5px 3px;
+  }
+
+  /* phases */
+  .phase-grid {
+    margin-top: 58px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px;
+  }
+  .phase {
+    background: var(--paper); border: 1px solid var(--line); padding: 22px 20px 20px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .phase .p-tag {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.16em; color: var(--blue);
+  }
+  .phase.adversarial .p-tag { color: var(--red); }
+  .phase h4 { font-size: 18px; font-weight: 700; line-height: 1.4; }
+  .phase ul { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+  .phase li {
+    font-size: 13px; line-height: 1.7; color: var(--ink-2);
+    padding-left: 14px; position: relative;
+  }
+  .phase li::before {
+    content: ""; position: absolute; left: 0; top: 10px;
+    width: 5px; height: 5px; background: var(--line-strong);
+  }
+  .phase.adversarial li::before { background: var(--red); }
+
+  /* meta review strip */
+  .meta-strip {
+    margin-top: 22px; background: var(--paper); border: 1px solid var(--line);
+    padding: 26px 28px; display: grid; grid-template-columns: 172px 1fr; gap: 26px;
+  }
+  .meta-strip .m-tag {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.14em; color: var(--ink-3); line-height: 1.9; text-transform: uppercase;
+  }
+  .meta-strip .m-tag b { color: var(--blue); display: block; font-size: 13px; }
+  .meta-strip p { font-size: 14.5px; color: var(--ink-2); max-width: 800px; }
+  .formula {
+    margin-top: 12px; display: inline-block; font-family: var(--mono); font-size: 13.5px;
+    background: var(--blue-soft); border: 1px solid #d6def5; color: var(--ink);
+    padding: 8px 14px;
+  }
+  .formula .pen { color: var(--red); font-weight: 600; }
+
+  /* verdict + profiles */
+  .verdict-row {
+    margin-top: 22px; display: grid; grid-template-columns: 5fr 7fr; gap: 18px;
+    align-items: stretch;
+  }
+  .verdict-row > * { min-width: 0; }
+  .json-card { background: var(--code-bg); padding: 24px 26px; }
+  .json-card .j-tag {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.16em; color: #6b7382; text-transform: uppercase; margin-bottom: 14px;
+  }
+  .json-card pre {
+    font-family: var(--mono); font-size: 13px; line-height: 1.85;
+    color: #d8dce4; overflow-x: auto;
+  }
+  .jk { color: #8fb0ff; }
+  .jv { color: #ff9d92; }
+  .jn { color: #e6c07b; }
+  .jb { color: #ff9d92; font-weight: 600; }
+  .jc { color: #5b6270; }
+  .profile-card { background: var(--paper); border: 1px solid var(--line); padding: 20px 22px 8px; overflow-x: auto; }
+  .profile-card table { width: 100%; border-collapse: collapse; }
+  .profile-card th {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600; text-align: left;
+    letter-spacing: 0.12em; color: var(--ink-3); text-transform: uppercase;
+    padding: 6px 8px 10px; border-bottom: 1px solid var(--line-strong);
+  }
+  .profile-card td {
+    padding: 12px 8px; border-bottom: 1px solid var(--line);
+    font-size: 13.5px; color: var(--ink-2); vertical-align: top;
+  }
+  .profile-card tr:last-child td { border-bottom: none; }
+  .profile-card td.pf { font-family: var(--mono); font-size: 12.5px; color: var(--ink); font-weight: 600; }
+  .profile-card td .yes { color: var(--red); font-weight: 700; }
+
+  /* ---------- tech grid ---------- */
+  .tech-grid {
+    margin-top: 56px; display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px; background: var(--line); border: 1px solid var(--line);
+  }
+  .tech {
+    background: var(--bg); padding: 26px 24px 24px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .tech .k-tag {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.14em; color: var(--red);
+  }
+  .tech h4 { font-size: 16.5px; font-weight: 700; line-height: 1.5; }
+  .tech p { font-size: 13.5px; line-height: 1.75; color: var(--ink-2); }
+
+  /* ---------- boundary + footer ---------- */
+  .boundary { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 48px; }
+  .boundary h5 {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.14em; color: var(--ink-3); text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .boundary p { font-size: 14.5px; line-height: 1.9; color: var(--ink-2); max-width: 480px; }
+  .boundary p strong { color: var(--ink); }
+  footer { border-top: 1px solid var(--line); }
+  footer .wrap {
+    display: flex; justify-content: space-between; align-items: center; gap: 24px;
+    padding-top: 26px; padding-bottom: 30px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+    letter-spacing: 0.03em; flex-wrap: wrap;
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 960px) {
+    .wrap { padding: 0 26px; }
+    .stat-strip { grid-template-columns: repeat(2, 1fr); }
+    .stat { padding-left: 0; border-left: none; border-top: 1px solid var(--line); }
+    .stat:nth-child(-n+2) { border-top: none; }
+    .gates { flex-direction: column; gap: 22px; }
+    .gates .conn { display: none; }
+    .gates .step { width: 100%; }
+    .phase-grid { grid-template-columns: repeat(2, 1fr); }
+    .tech-grid { grid-template-columns: repeat(2, 1fr); }
+    .verdict-row { grid-template-columns: 1fr; }
+    .meta-strip { grid-template-columns: 1fr; gap: 12px; }
+    .boundary { grid-template-columns: 1fr; gap: 30px; }
+    .principle { grid-template-columns: 1fr; gap: 8px; padding: 28px 0; }
+  }
+  @media (max-width: 620px) {
+    .topbar nav { display: none; }
+    .hero { padding: 72px 0 64px; }
+    section.block { padding: 64px 0; }
+    .phase-grid { grid-template-columns: 1fr; }
+    .tech-grid { grid-template-columns: 1fr; }
+    .stat-strip { grid-template-columns: 1fr; }
+    .stat { border-top: 1px solid var(--line); }
+    .stat:first-child { border-top: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <span class="brand">agent-judges <em>//</em> 对抗审查系统</span>
+    <nav>
+      <a href="#principles">理念</a>
+      <a href="#flow">流程</a>
+      <a href="#tech">技术</a>
+      <a href="#scope">边界</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <p class="kicker">// 单 Agent 不可靠:幻觉、遗漏、过度自信——是<b>结构性缺陷</b>,不是可以 prompt 掉的偶然失误</p>
+    <h1>所有 AI 产出，<br>都必须被<em>对抗审查</em>。</h1>
+    <p class="lede">
+      <strong>agent-judges</strong> 是一套 AI 产出审计系统:由确定性引擎驱动一组
+      <strong>互相挑战的 reviewer</strong>(评审者),横跨需求、规格、设计、测试计划等全部交付物,
+      产出<strong>可审计、可升级、可再次审查</strong>的裁决——而不是某个更强模型的单方面保证。
+    </p>
+    <div class="stat-strip">
+      <div class="stat">
+        <div class="num">4</div>
+        <div class="cap">辩论阶段:独立评审 → 对抗 → 盲评 → 合成</div>
+      </div>
+      <div class="stat">
+        <div class="num">3<i> 档</i></div>
+        <div class="cap">强度档位:fast / standard / thorough</div>
+      </div>
+      <div class="stat">
+        <div class="num">20<i>+</i></div>
+        <div class="cap">内置审查视角,Markdown 模板零代码扩展</div>
+      </div>
+      <div class="stat">
+        <div class="num">0</div>
+        <div class="cap">用户需配置的模型数——装入宿主即用</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="principles">
+  <div class="wrap">
+    <p class="sec-kicker">// 理念 PRINCIPLES</p>
+    <h2>四条立场</h2>
+    <div class="principles">
+      <div class="principle">
+        <div class="no"><b>01</b> / 对抗</div>
+        <div>
+          <h3>对抗性来自结构，而非单兵。</h3>
+          <p>不指望"一个更强的 judge"。独立评审、对抗辩论、盲评终判、裁决合成——四阶段固定流程逼 reviewer 互相挑战。reviewer 无自主性、不调工具、不决定流程:是合议庭,不是 agent team。</p>
+        </div>
+      </div>
+      <div class="principle">
+        <div class="no"><b>02</b> / 编排</div>
+        <div>
+          <h3>流程归引擎，LLM 只做判断。</h3>
+          <p>渐进门控、辩论推进、裁决合成、升级路由,全部由 <span class="inline-code">prepare / resume</span> 状态机确定性推进。任何 LLM——包括宿主——都无权编排流程。理由同上:单 agent 不可靠,所以更不能让单个 LLM 拿走编排权。</p>
+        </div>
+      </div>
+      <div class="principle">
+        <div class="no"><b>03</b> / 自省</div>
+        <div>
+          <h3>审查者也是 AI，同样不可靠。</h3>
+          <p>verdict(裁决)可作为输入,交由 ≥2 个异构 meta-reviewer 复审——查漏判、过判、置信度失准、共识假象;置信度经显式公式校准,而非简单覆盖。是否升级人工,只认校准后的值。</p>
+        </div>
+      </div>
+      <div class="principle">
+        <div class="no"><b>04</b> / 升级</div>
+        <div>
+          <h3>判不动，就交人。</h3>
+          <p>每条 finding 与整体裁决都携带量化置信度;低于阈值,自动标记 <span class="inline-code">escalate_to_human</span>。系统的目标不是替代人:高置信处自主,低置信处召回。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="flow-band" id="flow">
+  <section class="block">
+    <div class="wrap">
+      <p class="sec-kicker">// 流程 PIPELINE</p>
+      <h2>渐进门控 × 四阶段辩论</h2>
+      <p class="band-note">零参数调用时,系统不做先验复杂度分类:哨兵先行,用 Phase 1 的实测信号驱动两道纯规则门。流程强度由结果决定,而非入口处的预测;完整路径记录于 verdict 的 <span class="inline-code">route</span> 字段,可复盘。</p>
+
+      <ol class="gates">
+        <li class="step node">
+          <span class="dot"></span>
+          <span class="g-tag">Step 1</span>
+          <span class="g-name">哨兵先行</span>
+          <span class="g-cap">短文(&lt; 8k token)派 1 名哨兵独立评审;长文直接 3 人面板</span>
+        </li>
+        <li class="conn"></li>
+        <li class="step gate">
+          <span class="diamond"></span>
+          <span class="g-tag">Gate 1 · 纯规则</span>
+          <span class="g-name">早停判定</span>
+          <span class="g-cap">哨兵未发现 major 且置信 ≥ 0.9 → 判定"简单",直接输出</span>
+        </li>
+        <li class="conn"></li>
+        <li class="step node">
+          <span class="dot"></span>
+          <span class="g-tag">Step 2</span>
+          <span class="g-name">面板扩张</span>
+          <span class="g-cap">哨兵 verdict 保留,不重复计算;补足至 3 人并行独立评审</span>
+        </li>
+        <li class="conn"></li>
+        <li class="step gate">
+          <span class="diamond"></span>
+          <span class="g-tag">Gate 2 · 纯规则</span>
+          <span class="g-name">续跑强度</span>
+          <span class="g-cap">发现 critical 或加权置信偏低 → thorough 续跑;否则 standard</span>
+        </li>
+        <li class="conn"></li>
+        <li class="step node">
+          <span class="dot"></span>
+          <span class="g-tag">Final</span>
+          <span class="g-name">终态</span>
+          <span class="g-cap">按选定强度完成四阶段辩论,产出 verdict 与报告</span>
+        </li>
+      </ol>
+
+      <div class="phase-grid">
+        <div class="phase">
+          <span class="p-tag">Phase 1</span>
+          <h4>独立评审</h4>
+          <ul>
+            <li>N 名 reviewer 并行,互不可见</li>
+            <li>耗时 ≈ 单次延迟,而非 N 倍</li>
+            <li>超长输入自动截断保护</li>
+          </ul>
+        </div>
+        <div class="phase adversarial">
+          <span class="p-tag">Phase 2 · 对抗</span>
+          <h4>对抗辩论</h4>
+          <ul>
+            <li>阅他人观点后逐条反驳</li>
+            <li>1–3 轮,每轮前检查预算</li>
+            <li>≥2 名 reviewer 方开启</li>
+          </ul>
+        </div>
+        <div class="phase">
+          <span class="p-tag">Phase 3</span>
+          <h4>盲评终判</h4>
+          <ul>
+            <li>辩论后各自独立终判</li>
+            <li>终判互不可见,防从众</li>
+            <li>单 reviewer 快检自动跳过</li>
+          </ul>
+        </div>
+        <div class="phase">
+          <span class="p-tag">Phase 4</span>
+          <h4>裁决合成</h4>
+          <ul>
+            <li>severity 取最严(critical &gt; major &gt; minor &gt; pass)</li>
+            <li>置信度按 reviewer 权重加权</li>
+            <li>产出 consensus / stability 评分</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="meta-strip">
+        <div class="m-tag">Meta Review<b>元审查</b>(thorough 档)</div>
+        <div>
+          <p>verdict 本身被 ≥2 个 meta-reviewer(不同模型、不同视角)再次审查:漏判、过判、置信度失准、推理缺口、共识假象、完整性。校准使用显式公式,升级判定只认校准值:</p>
+          <span class="formula">calibrated_confidence = confidence × ( 1 − <span class="pen">meta_penalty</span> )&nbsp;&nbsp;<span class="jc">// critical 0.5 · major 0.3 · minor 0.1</span></span>
+        </div>
+      </div>
+
+      <div class="verdict-row">
+        <div class="json-card">
+          <div class="j-tag">Verdict // 机器可读输出(节选)</div>
+<pre><span class="jk">"verdict"</span>: {
+  <span class="jk">"severity"</span>: <span class="jv">"major"</span>,
+  <span class="jk">"confidence"</span>: <span class="jn">0.65</span>,
+  <span class="jk">"calibrated_confidence"</span>: <span class="jn">0.455</span>,
+  <span class="jk">"escalate_to_human"</span>: <span class="jb">true</span>,
+  <span class="jk">"findings"</span>: [ <span class="jc">{ 证据引用 · 建议 · 逐条置信度 }</span> ]
+}</pre>
+        </div>
+        <div class="profile-card">
+          <table>
+            <thead>
+              <tr>
+                <th>档位</th><th>Reviewer</th><th>辩论轮</th><th>元审查</th><th>LLM 调用</th><th>适用</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="pf">fast</td><td>1</td><td>0</td><td>—</td><td>1</td><td>短文快检 · CI 门禁</td>
+              </tr>
+              <tr>
+                <td class="pf">standard</td><td>2</td><td>1</td><td>—</td><td>~6</td><td>常规文档审查</td>
+              </tr>
+              <tr>
+                <td class="pf">thorough</td><td>3</td><td>2</td><td><span class="yes">✓</span></td><td>~15</td><td>关键交付物 · 终审</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="block" id="tech">
+  <div class="wrap">
+    <p class="sec-kicker">// 技术 CAPABILITIES</p>
+    <h2>关键技术点</h2>
+    <div class="tech-grid">
+      <div class="tech">
+        <span class="k-tag">K1</span>
+        <h4>异构 reviewer 面板</h4>
+        <p>不同角色配不同模型(Claude + GPT-4o 等),避免同模型共享盲区;模型写在 reviewer 模板 frontmatter,省略即用宿主默认。</p>
+      </div>
+      <div class="tech">
+        <span class="k-tag">K2</span>
+        <h4>元审查与显式校准</h4>
+        <p>审查结果再被审查:≥2 个 meta-reviewer 异构复审,置信度按显式公式校准——而非"再跑一遍"式的简单覆盖。</p>
+      </div>
+      <div class="tech">
+        <span class="k-tag">K3</span>
+        <h4>置信度驱动人工升级</h4>
+        <p>校准置信低于阈值 → 自动标记 escalate_to_human;每条 finding 附证据引用与可执行建议,交人即可裁决。</p>
+      </div>
+      <div class="tech">
+        <span class="k-tag">K4</span>
+        <h4>零代码扩展</h4>
+        <p>reviewer 用 Markdown 模板定义(persona + checklist),SKILL.md 知识包注入领域 rubric;新增视角不改一行代码。</p>
+      </div>
+      <div class="tech">
+        <span class="k-tag">K5</span>
+        <h4>宿主零配置</h4>
+        <p>一条命令装入 Claude Code / OpenCode:judge-manager + 实体 reviewer Agent,模型、凭证、额度全部来自宿主已有配置。</p>
+      </div>
+      <div class="tech">
+        <span class="k-tag">K6</span>
+        <h4>递归自审</h4>
+        <p>verdict 序列化后可再次作为输入被审查(深度上限 2)——"审查者不可靠"的主张,对系统自身同样成立并被兑现。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="scope">
+  <div class="wrap">
+    <p class="sec-kicker">// 边界 SCOPE &amp; ORIGIN</p>
+    <div class="boundary">
+      <div>
+        <h5>不做什么</h5>
+        <p>不做传统 code review:代码风格、命名规范、设计模式、性能微优化——交给 SonarQube / ESLint / 人工。但这些工具的<strong>产物(检视报告本身是否可靠)</strong>,可以作为本系统的输入被审查。</p>
+      </div>
+      <div>
+        <h5>渊源</h5>
+        <p>受 <strong>Agent-as-a-Judge</strong>(ICML 2025)启发的重写:继承其多数投票聚合、置信度公式与 AUROC 校准评估;辩论编排、元审查、升级路由、状态机为全新构建。审查对象是<strong>产出物</strong>,不是执行轨迹。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>agent-judges · adversarial-judge — AI 产出对抗审计系统</span>
+    <span>Inspired by Agent-as-a-Judge (ICML 2025) · MIT License</span>
+  </div>
+</footer>
+
+</body>
+</html>

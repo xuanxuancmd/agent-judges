@@ -29,7 +29,9 @@ def test_stock_yaml_loads_all_templates(stock_registry):
 
 def test_get_returns_correct_config(stock_registry):
     r = stock_registry.get("requirement-elicitation-reviewer")
-    assert r.model == "anthropic/claude-sonnet-4-20250514"
+    # v2: model values were removed during the MD migration (host default);
+    # users opt into a host-namespace model per reviewer when wanted
+    assert r.model is None
     assert "需求分析师" in r.system_prompt
     assert len(r.checklist) >= 5
 
@@ -40,8 +42,9 @@ def test_get_nonexistent_raises_key_error_with_available(stock_registry):
     assert "spec-reviewer" in str(exc_info.value)  # lists available names
 
 
-def test_meta_reviewer_2_uses_heterogeneous_model(stock_registry):
-    assert stock_registry.get("meta-reviewer-2").model == "openai/gpt-4o"
+def test_meta_reviewer_2_model_unset_after_md_migration(stock_registry):
+    # v2 migration: no litellm model strings; host-namespace model is opt-in
+    assert stock_registry.get("meta-reviewer-2").model is None
 
 
 def test_model_none_loads_fine(stock_registry):
@@ -91,6 +94,85 @@ checklist:
     )
     registry = ReviewerRegistry(tmp_path)
     assert "yml-reviewer" in registry.reviewers
+
+
+def test_markdown_format_loads(tmp_path):
+    # v2 source format: frontmatter metadata + persona body
+    (tmp_path / "r1.md").write_text(
+        """---
+name: md-reviewer
+description: loaded from markdown
+# model: opus    # optional host-namespace model (commented = host default)
+weight: 1.5
+checklist:
+  - criteria: c1
+  - criteria: c2
+    weight: 0.5
+---
+
+你是一位审查者,关注质量。
+""",
+        encoding="utf-8",
+    )
+    registry = ReviewerRegistry(tmp_path)
+    r = registry.get("md-reviewer")
+    assert r.system_prompt == "你是一位审查者,关注质量。"
+    assert r.model is None
+    assert r.weight == 1.5
+    assert [c.criteria for c in r.checklist] == ["c1", "c2"]
+    assert r.checklist[1].weight == 0.5
+
+
+def test_markdown_model_field_parsed(tmp_path):
+    (tmp_path / "r1.md").write_text(
+        """---
+name: modelled-reviewer
+description: d
+model: opus
+checklist:
+  - criteria: c1
+---
+
+persona body
+""",
+        encoding="utf-8",
+    )
+    assert ReviewerRegistry(tmp_path).get("modelled-reviewer").model == "opus"
+
+
+def test_markdown_missing_frontmatter_errors(tmp_path):
+    (tmp_path / "bad.md").write_text("just a persona, no frontmatter", encoding="utf-8")
+    with pytest.raises(ValueError, match="frontmatter"):
+        ReviewerRegistry(tmp_path)
+
+
+def test_markdown_empty_body_errors(tmp_path):
+    (tmp_path / "empty.md").write_text(
+        """---
+name: empty-reviewer
+description: d
+checklist:
+  - criteria: c1
+---
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="persona body is empty"):
+        ReviewerRegistry(tmp_path)
+
+
+def test_markdown_wins_over_same_stem_yaml(tmp_path):
+    (tmp_path / "r1.yaml").write_text(
+        "name: from-yaml\ndescription: d\nsystem_prompt: yaml persona\n"
+        "checklist:\n  - criteria: c\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "r1.md").write_text(
+        "---\nname: from-md\ndescription: d\nchecklist:\n  - criteria: c\n---\n\nmd persona\n",
+        encoding="utf-8",
+    )
+    registry = ReviewerRegistry(tmp_path)
+    assert set(registry.reviewers) == {"from-yaml", "from-md"}
 
 
 def test_duplicate_name_raises(tmp_path):

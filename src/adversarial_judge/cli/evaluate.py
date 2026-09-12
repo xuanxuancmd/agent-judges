@@ -1,4 +1,4 @@
-"""``aj evaluate`` — confidence-calibration evaluation (Accuracy / AUROC).
+"""``agent-judges evaluate`` — confidence-calibration evaluation (Accuracy / AUROC).
 
 Compares system predictions against human labels; logic lives in
 ``evaluation.py`` so it stays importable without the CLI.

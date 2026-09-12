@@ -17,6 +17,7 @@ __all__ = [
     "failed_verdict",
     "compute_consensus",
     "compute_stability",
+    "aggregate_majority_votes",
 ]
 
 
@@ -106,3 +107,33 @@ def compute_stability(
         1 for i, f in zip(individual, final) if i.satisfied == f.satisfied
     )
     return round(unchanged / len(individual), 4)
+
+
+def aggregate_majority_votes(verdicts: list[Verdict]) -> Verdict:
+    """Aggregate N same-prompt votes into one verdict (AaaJ formula, G-5).
+
+    Pure-function twin of ``judge.run_majority_vote``'s aggregation half —
+    the engine (agent mode) uses this after collecting the vote tasks'
+    results from the run directory; the in-process path keeps the
+    call-loop version.
+
+    ``confidence = max(satisfied_ratio, 1 - satisfied_ratio)`` with majority
+    satisfied at ``satisfied_ratio >= 0.5``; findings are merged and the
+    most severe verdict severity wins.
+    """
+    satisfied_count = sum(1 for v in verdicts if v.satisfied)
+    total = len(verdicts)
+    satisfied_ratio = (satisfied_count / total) if total else 0.0
+    majority_satisfied = satisfied_ratio >= 0.5
+    confidence = max(satisfied_ratio, 1.0 - satisfied_ratio)
+
+    all_findings = [f for v in verdicts for f in v.findings]
+    max_severity = max(verdicts, key=lambda v: v.severity.rank).severity
+
+    return Verdict(
+        severity=max_severity,
+        confidence=round(confidence, 4),
+        reasoning="\n---\n".join(v.reasoning for v in verdicts),
+        findings=all_findings,
+        satisfied=majority_satisfied,
+    )

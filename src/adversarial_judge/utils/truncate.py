@@ -6,6 +6,33 @@ import tiktoken
 logger = logging.getLogger(__name__)
 
 
+def _resolve_encoding(model: Union[str, None] = None):
+    """Resolve the tiktoken encoding for ``model`` (cl100k_base fallback)."""
+    if model is not None:
+        try:
+            return tiktoken.encoding_for_model(model)
+        except KeyError:
+            # Fallback to cl100k_base (used by gpt-4) if model not found
+            logger.warning(
+                "Model %s not found in tiktoken. Using cl100k_base encoding instead.",
+                model,
+            )
+            return tiktoken.get_encoding("cl100k_base")
+    return tiktoken.get_encoding("cl100k_base")
+
+
+def count_tokens(text: Union[str, None], model: Union[str, None] = None) -> int:
+    """Exact token count for ``text`` via the same encoding truncate_string uses.
+
+    Deterministic length signal for the progressive flow's start rule —
+    never ask an LLM to measure what tiktoken already knows.
+    """
+    if not text:
+        return 0
+    encoding = _resolve_encoding(model)
+    return len(encoding.encode(text, disallowed_special=()))
+
+
 def truncate_string(
     info_string: Union[str, None],
     model: Union[str, None] = None,
@@ -22,18 +49,7 @@ def truncate_string(
 
     info_string = str(info_string)
 
-    if model is not None:
-        try:
-            encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            # Fallback to cl100k_base (used by gpt-4) if model not found
-            logger.warning(
-                "Model %s not found in tiktoken. Using cl100k_base encoding instead.",
-                model,
-            )
-            encoding = tiktoken.get_encoding("cl100k_base")
-    else:
-        encoding = tiktoken.get_encoding("cl100k_base")
+    encoding = _resolve_encoding(model)
     tokens = encoding.encode(info_string, disallowed_special=())
 
     # If tokens exceed the maximum length, we truncate based on the drop_mode

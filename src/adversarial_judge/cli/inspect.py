@@ -1,4 +1,4 @@
-"""``aj list-reviewers`` / ``aj list-skills`` / ``aj inspect-reviewer`` —
+"""``agent-judges list-reviewers`` / ``agent-judges list-skills`` / ``agent-judges inspect-reviewer`` —
 inspect available templates, skill packages, and the fully assembled
 anonymous-agent prompt.
 """
@@ -62,7 +62,7 @@ def list_skills(
         checklist_str = f" ({len(s.checklist)} 项 checklist)" if s.checklist else ""
         typer.echo(f"  {s.name:40s}  {s.description}{checklist_str}")
     _echo_err(
-        "\n用法: aj review -r skill:<name> 直接加载,或在 reviewer YAML 中通过"
+        "\n用法: agent-judges review --llm litellm -r skill:<name> 直接加载,或在 reviewer MD 中通过"
         " skills: [<name>] 引用"
     )
 
@@ -81,7 +81,7 @@ def inspect_reviewer(
 ):
     """显示匿名 agent 的完整组装提示词(persona + 已拉起的 skill + 审查框架)
 
-    用于验证 reviewer YAML 引用的 skill 是否被正确注入到匿名槽位。
+    用于验证 reviewer MD 引用的 skill 是否被正确注入到匿名槽位。
     """
     try:
         registry = ReviewerRegistry(

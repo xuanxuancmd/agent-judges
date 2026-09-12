@@ -14,6 +14,14 @@ Phases (borrowed from agent-review-panel's debate + blind-final model):
 4. Verdict synthesis — weighted aggregation with ``Severity.rank``
    max-severity (B-1), real consensus/stability computation (M-5)
 
+Two entries:
+- ``run`` — classic execution with a fixed reviewer panel and round count
+  (explicit ``-r`` / ``--profile`` paths)
+- ``run_progressive`` — sentinel-gated auto mode (zero flow params): a
+  deterministic start rule (token count), a cheap sentinel review, then
+  pure-rule gates read the measured Phase-1 signals to decide between an
+  early stop and a standard/thorough continuation (see progressive.py)
+
 Budget checks (``broker.check_budget``) run between phases and before each
 debate round; per-reviewer failures degrade to a low-confidence Verdict
 instead of crashing the batch.
@@ -29,8 +37,16 @@ from .consensus import (
     failed_verdict,
     synthesize_verdict,
 )
+from .evidence import enrich_context
 from .judge import llm_verdict, run_majority_vote
 from .llm.broker import LLMBroker
+from .progressive import (
+    TIER_RANK,
+    ProgressiveDecision,
+    escalation_tier,
+    should_early_stop,
+    start_panel_size,
+)
 from .prompts.debate import (
     build_blind_final_system_prompt,
     build_blind_final_user_prompt,
@@ -40,8 +56,9 @@ from .prompts.debate import (
 from .prompts.judge_system import build_system_prompt
 from .prompts.judge_user import build_judge_prompt
 from .reviewer import ReviewerConfig, ReviewerRegistry
+from .router import PROFILE_MAP, deterministic_panel
 from .types import Verdict
-from .utils.truncate import truncate_string
+from .utils.truncate import count_tokens, truncate_string
 
 logger = logging.getLogger(__name__)
 
@@ -95,15 +112,142 @@ class DebateOrchestrator:
         content: str,
         reviewer_names: list[str],
         context: str | None = None,
+        filename: str | None = None,
     ) -> DebateResult:
         reviewers = [self.registry.get(name) for name in reviewer_names]
         if len(reviewers) < 1:
             raise ValueError("At least 1 reviewer required")
 
+        # Active verification: enrich context with graphify evidence
+        context = enrich_context(content, context, filename)
+
         # Phase 1: independent review (parallel, M-8)
         individual_verdicts = self._parallel_independent_review(
             reviewers, content, context
         )
+        return self._phases_234(
+            reviewers, content, individual_verdicts, context, self.debate_rounds
+        )
+
+    def run_progressive(
+        self,
+        content: str,
+        context: str | None = None,
+        filename: str | None = None,
+        candidates: list[str] | None = None,
+        max_tier: str = "thorough",
+    ) -> tuple[DebateResult, ProgressiveDecision]:
+        """Sentinel-gated progressive review (zero-parameter auto mode).
+
+        1. Deterministic start: tiktoken count → 1 sentinel (short) or a
+           full 3-reviewer panel (long content skips the single-pass phase)
+        2. Sentinel review → Gate 1: clean high-confidence pass → early stop
+           (total cost: 1 call; the verdict still carries any minor notes)
+        3. Panel expansion: the sentinel verdict is KEPT (never re-computed),
+           the remaining reviewers run in parallel
+        4. Gate 2: measured signals → "thorough" | "standard" continuation
+           through the regular Phase 2-4 pipeline
+
+        ``max_tier`` caps the gate-2 escalation (e.g. "standard" when
+        meta-reviewer templates are unavailable).
+        """
+        # Active verification: enrich context with graphify evidence
+        context = enrich_context(content, context, filename)
+        available = candidates or [
+            r.name
+            for r in self.registry.list_all()
+            if not r.name.startswith("meta-")
+        ]
+        token_count = count_tokens(content)
+        start = start_panel_size(token_count)
+        content_type, panel_names = deterministic_panel(
+            available,
+            PROFILE_MAP["thorough"]["reviewers"],
+            filename=filename,
+            content=content,
+        )
+        reviewers = [self.registry.get(n) for n in panel_names]
+        gate1_reason: str | None = None
+
+        individual_verdicts: list[Verdict]
+        if start >= 3:
+            # long content: full panel immediately, no sentinel single-pass
+            individual_verdicts = self._parallel_independent_review(
+                reviewers, content, context
+            )
+        else:
+            sentinel = reviewers[0]
+            sentinel_verdict = self._parallel_independent_review(
+                [sentinel], content, context
+            )[0]
+            stop, gate1_reason = should_early_stop([sentinel_verdict])
+            if stop:
+                final_verdict = synthesize_verdict(
+                    [sentinel_verdict], [sentinel], content
+                )
+                result = DebateResult(
+                    individual_verdicts=[sentinel_verdict],
+                    debate_rounds=[],
+                    final_verdicts=[sentinel_verdict],
+                    final_verdict=final_verdict,
+                    consensus_score=compute_consensus([sentinel_verdict]),
+                    stability_score=1.0,
+                    stability_degraded=True,
+                )
+                decision = ProgressiveDecision(
+                    token_count=token_count,
+                    start_panel=start,
+                    early_stopped=True,
+                    tier="fast",
+                    gate1_reason=gate1_reason,
+                    gate2_reason=None,
+                    content_type=content_type,
+                    reviewers=[sentinel.name],
+                    debate_rounds=0,
+                    review_depth=0,
+                )
+                return result, decision
+            # expansion: keep the sentinel verdict, review the rest in parallel
+            rest_verdicts = self._parallel_independent_review(
+                reviewers[1:], content, context
+            )
+            individual_verdicts = [sentinel_verdict] + rest_verdicts
+
+        tier, gate2_reason = escalation_tier(individual_verdicts, reviewers)
+        if TIER_RANK[tier] > TIER_RANK[max_tier]:
+            tier = max_tier  # e.g. meta-reviewer templates missing
+        settings = PROFILE_MAP[tier]
+        result = self._phases_234(
+            reviewers,
+            content,
+            individual_verdicts,
+            context,
+            settings["debate_rounds"],
+        )
+        decision = ProgressiveDecision(
+            token_count=token_count,
+            start_panel=start,
+            early_stopped=False,
+            tier=tier,
+            gate1_reason=gate1_reason,
+            gate2_reason=gate2_reason,
+            content_type=content_type,
+            reviewers=[r.name for r in reviewers],
+            debate_rounds=settings["debate_rounds"],
+            review_depth=int(settings["meta_review"]),
+        )
+        return result, decision
+
+    def _phases_234(
+        self,
+        reviewers: list[ReviewerConfig],
+        content: str,
+        individual_verdicts: list[Verdict],
+        context: str | None,
+        debate_rounds: int,
+    ) -> DebateResult:
+        """Phases 2-4: debate → blind final → synthesis, over an already
+        computed Phase-1 result (shared by ``run`` and ``run_progressive``)."""
 
         # Budget check after Phase 1: over budget → skip debate, synthesize now
         if not self.broker.check_budget():
@@ -122,9 +266,9 @@ class DebateOrchestrator:
 
         # Phase 2: adversarial debate — only when >= 2 reviewers (B-3)
         debate_log: list[list[str]] = []
-        if len(reviewers) >= 2 and self.debate_rounds > 0:
+        if len(reviewers) >= 2 and debate_rounds > 0:
             current_positions = [v.reasoning for v in individual_verdicts]
-            for _round_idx in range(self.debate_rounds):
+            for _round_idx in range(debate_rounds):
                 if not self.broker.check_budget():
                     logger.warning(
                         "预算超限 ($%.4f),终止辩论", self.broker.get_total_cost()

@@ -7,7 +7,7 @@ Credential passthrough: when no explicit ``default_api_key`` /
 ``default_base_url`` is given, per-model credentials are resolved from the
 host session environment (``ANTHROPIC_API_KEY`` / ``ANTHROPIC_AUTH_TOKEN`` /
 ``OPENAI_API_KEY`` / ``ANTHROPIC_BASE_URL``) — see ``credentials.py``. This is
-how ``aj`` reuses the LLM access of the Claude Code / OpenCode session that
+how ``agent-judges`` reuses the LLM access of the Claude Code / OpenCode session that
 invoked it, without its own API keys.
 """
 
