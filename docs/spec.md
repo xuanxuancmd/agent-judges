@@ -240,7 +240,7 @@ JSON Verdict 核心字段:
 - **引擎 CLI**:命令全称 **`agent-judges`**(避免短名冲突,废弃 `aj`)。子命令:`review`(审查)/ `install`(安装,FR-10)/ `list-reviewers` / `list-skills` / `inspect-reviewer` / `evaluate`
 - `review` 支持三种输入:`--content` / `--file` / stdin 管道;`--file` 的 `.json` 后缀自动提取 verdict 文本(元审查场景)
 - **零参数即全自动**:`agent-judges review --file x.md` 不带流程参数时走渐进式审查(FR-2),全程用户零决策;`--profile fast/standard/thorough` 显式选档;细粒度参数跳过渐进式,按指定参数执行
-- **prepare/resume 接口**(agent 驱动模式):`agent-judges review --file X --run-dir RUN` 初始化并发出首批任务后退出;`agent-judges review --resume --run-dir RUN` 消费结果、确定性推进、发出下一批任务或产出终态。driver 协议见 FR-11
+- **prepare/resume 接口**(agent 驱动模式):`agent-judges review --file X` 初始化并发出首批任务后退出;`agent-judges review --resume` 消费结果、确定性推进、发出下一批任务或产出终态。运行产物拆分为 logs(`.harness/logs/judges/<run_id>/`:state/tasks/results)与 evidence(`.harness/evidence/judges/<run_id>/`:verdict/report)。driver 协议见 FR-11
 - **direct 模式**(`--llm litellm`):引擎进程内完成全部 LLM 调用,服务 CI/裸机;`--max-cost`/`--model`/`--override-model` 仅此模式有效
 - `--interactive` 模式保留(低置信度暂停等 stdin 人工裁决;仅 direct 模式可用)
 - 不作为 Python 库嵌入 agent 运行时

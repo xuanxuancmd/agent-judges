@@ -397,7 +397,7 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 | `cli/install.py` | install 子命令: 编译 reviewer 源 + judge-manager 模板 → 宿主 Agent 定义 |
 | `cli/inspect.py` | inspect-reviewer 子命令: 查看 reviewer 配置详情 |
 | `cli/evaluate.py` | evaluate 子命令: AUROC 校准评估 |
-| `cli/agent_review.py` | agent 驱动模式: prepare / resume + driver 协议, --run-dir / --resume |
+| `cli/agent_review.py` | agent 驱动模式: prepare / resume + driver 协议, --resume 自动查找最新 run |
 
 ### output
 

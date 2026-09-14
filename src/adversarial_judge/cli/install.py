@@ -4,9 +4,15 @@ Artifacts are **compiled products**: the reviewer sources (``reviewers/*.md``)
 and the in-package templates (``adversarial_judge/integrations/``) are the
 single source of truth; re-run install after editing sources.
 
-Per host:
-- claude-code: global ``~/.claude/agents/``, project ``.claude/agents/``
-- opencode:   global ``~/.config/opencode/agent/``, project ``.opencode/agent/``
+Per host — everything is namespaced under a ``judges/`` subdirectory so the
+installed agents stay visually separate from the user's own agents:
+- claude-code: global ``~/.claude/agents/judges/``, project ``.claude/agents/judges/``
+  (identity comes from the ``name`` frontmatter — the subdirectory does NOT
+  change agent names)
+- opencode:   global ``~/.config/opencode/agents/judges/``, project ``.opencode/agents/judges/``
+  (identity comes from the file PATH — agents register as ``judges/<name>``;
+  the opencode judge-manager template instructs the driver to add the
+  ``judges/`` prefix when spawning reviewer subagents)
 
 Generated reviewer agents carry a "do not invoke directly" description
 prefix and the system-fixed judge frame merged into the persona body;
@@ -59,15 +65,23 @@ def _detect_host() -> str:
     )
 
 
+#: install namespace: all judge agents live in a ``judges/`` subdirectory of
+#: the host agent dir, keeping them separate from the user's own agents
+_SUBDIR = "judges"
+
+
 def _agent_dir(host: str, project: bool) -> Path:
-    if project:
-        return Path(".claude/agents") if host == "claude-code" else Path(".opencode/agent")
-    home = Path.home()
-    return (
-        (home / ".claude" / "agents")
-        if host == "claude-code"
-        else (home / ".config" / "opencode" / "agent")
-    )
+    if host == "claude-code":
+        base = (
+            Path(".claude/agents") if project else Path.home() / ".claude" / "agents"
+        )
+    else:
+        base = (
+            Path(".opencode/agents")
+            if project
+            else Path.home() / ".config" / "opencode" / "agents"
+        )
+    return base / _SUBDIR
 
 
 def _generate_reviewer_agent_md(name: str, description: str, model: str | None,

@@ -35,7 +35,8 @@ class TestClaudeCode:
         (fake_home / ".claude").mkdir()
         result = runner.invoke(app, _install_args())
         assert result.exit_code == 0, result.output
-        agents_dir = fake_home / ".claude" / "agents"
+        # namespaced under judges/ — separate from the user's own agents
+        agents_dir = fake_home / ".claude" / "agents" / "judges"
         # judge-manager + 20 reviewers
         installed = sorted(p.stem for p in agents_dir.glob("*.md"))
         assert "judge-manager" in installed
@@ -47,9 +48,9 @@ class TestClaudeCode:
         (fake_home / ".claude").mkdir()
         result = runner.invoke(app, _install_args())
         assert result.exit_code == 0, result.output
-        text = (fake_home / ".claude" / "agents" / "spec-reviewer.md").read_text(
-            encoding="utf-8"
-        )
+        text = (
+            fake_home / ".claude" / "agents" / "judges" / "spec-reviewer.md"
+        ).read_text(encoding="utf-8")
         # no-direct-invoke guard in the description
         assert text.startswith("---")
         assert "请勿直接触发" in text
@@ -61,9 +62,12 @@ class TestClaudeCode:
         assert "checklist:" not in text
         assert "majority_vote:" not in text
         assert "weight:" not in text
+        # claude-code identity comes from frontmatter — names stay unprefixed
+        assert "name: spec-reviewer" in text
         # skill knowledge is injected into the persona at compile time
         scanner = (
-            fake_home / ".claude" / "agents" / "dangerous-operation-scanner.md"
+            fake_home / ".claude" / "agents" / "judges"
+            / "dangerous-operation-scanner.md"
         ).read_text(encoding="utf-8")
         assert "危险操作模式清单" in scanner  # dangerous-operations skill body
 
@@ -78,7 +82,9 @@ class TestClaudeCode:
         )
         result = runner.invoke(app, ["install", "--reviewers-dir", str(src)])
         assert result.exit_code == 0, result.output
-        text = (fake_home / ".claude" / "agents" / "m1.md").read_text(encoding="utf-8")
+        text = (
+            fake_home / ".claude" / "agents" / "judges" / "m1.md"
+        ).read_text(encoding="utf-8")
         assert "model: opus" in text  # host-namespace model passed through
 
     def test_project_scope(self, fake_home, monkeypatch, tmp_path):
@@ -86,7 +92,7 @@ class TestClaudeCode:
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, _install_args("--project"))
         assert result.exit_code == 0, result.output
-        assert (tmp_path / ".claude" / "agents" / "judge-manager.md").is_file()
+        assert (tmp_path / ".claude" / "agents" / "judges" / "judge-manager.md").is_file()
 
 
 class TestOpenCode:
@@ -94,13 +100,17 @@ class TestOpenCode:
         (fake_home / ".config" / "opencode").mkdir(parents=True)
         result = runner.invoke(app, _install_args("--host", "opencode"))
         assert result.exit_code == 0, result.output
-        agents_dir = fake_home / ".config" / "opencode" / "agent"
+        # docs-canonical agents/ dir + judges/ namespace
+        agents_dir = fake_home / ".config" / "opencode" / "agents" / "judges"
         assert (agents_dir / "judge-manager.md").is_file()
         text = (agents_dir / "spec-reviewer.md").read_text(encoding="utf-8")
         assert "mode: subagent" in text  # opencode reviewers are not user-facing
         judge = (agents_dir / "judge-manager.md").read_text(encoding="utf-8")
         assert "mode: all" in judge  # judge-manager is both primary and subagent
         assert "agent-judges review --file" in judge  # driver protocol text
+        # opencode names come from the file path → the driver must map the
+        # engine's agent field onto the judges/ namespace
+        assert '"judges/" + 任务的 agent 字段' in judge
 
 
 class TestDetectionErrors:

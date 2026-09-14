@@ -14,7 +14,7 @@ _OUTPUT_REQUIREMENTS = """# 输出要求
 - severity: critical / major / minor / pass
 - confidence: 0.0-1.0
 - reasoning: 推理过程
-- findings: [{description, severity, confidence, evidence, suggestion}]
+- findings: [{description, severity: critical/major/minor, confidence, evidence, suggestion}]
 - satisfied: bool"""
 
 

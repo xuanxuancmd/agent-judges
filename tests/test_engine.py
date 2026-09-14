@@ -342,6 +342,9 @@ class TestFixedFlow:
         state, tasks = advance(state, results, cfgs)
         for t in tasks:  # blind finals
             results[t.task_id] = MAJOR_VERDICT_JSON
+        # agent-mode reviewers see ONLY the task prompt → it must carry the
+        # JSON output protocol (regression: prose answers degrade to conf 0.0)
+        assert all("```json" in t.prompt for t in tasks)
         state, tasks = advance(state, results, cfgs)
         assert state.stage == Stage.DONE  # depth 0 → no meta
         assert state.meta_verdict is None

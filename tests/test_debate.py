@@ -279,3 +279,42 @@ class TestFullDebate:
         assert v.satisfied is False  # 2/3 unsatisfied
         assert v.confidence == round(2 / 3, 4)
         assert mock.call_count == 3
+
+
+class TestPromptBuilders:
+    """Blind-final prompts must carry the JSON output protocol.
+
+    Regression (found by the agent-mode e2e on real host reviewers): in
+    agent mode the reviewer Agent sees ONLY the task prompt — without the
+    protocol it answers in prose and the verdict parse chain degrades to a
+    failed verdict (confidence 0.0). The litellm path masked this via
+    ``complete_json`` schema injection at the LLM layer.
+    """
+
+    def test_blind_final_user_prompt_carries_json_protocol(self):
+        from adversarial_judge.prompts.debate import build_blind_final_user_prompt
+
+        prompt = build_blind_final_user_prompt("内容 X", "立场 Y")
+        assert "```json" in prompt
+        assert "severity: critical / major / minor / pass" in prompt
+        assert "satisfied: bool" in prompt
+        # original instruction preserved (substring stability)
+        assert "请给出最终裁决" in prompt
+        assert "立场 Y" in prompt
+
+    def test_finding_severity_enum_is_enumerated_in_prompts(self):
+        """Real-reviewer regression (agent-mode e2e): without the enum,
+        reviewers answer findings severity with high/medium/low, which the
+        lenient parser silently downgrades to minor — understating results.
+        """
+        from adversarial_judge.prompts.debate import build_blind_final_user_prompt
+        from adversarial_judge.prompts.judge_user import build_judge_prompt
+
+        checklist = [type("C", (), {"criteria": "c1"})()]
+        phase1 = build_judge_prompt("内容", checklist)
+        blind = build_blind_final_user_prompt("内容", "立场")
+        for prompt in (phase1, blind):
+            assert (
+                "findings: [{description, severity: critical/major/minor, "
+                "confidence, evidence, suggestion}]" in prompt
+            )

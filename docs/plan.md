@@ -103,18 +103,18 @@ awaiting_panel → gate2 → tier(standard | thorough)
 
 | 执行器 | 文件 | 机制 |
 |---|---|---|
-| **AgentTask(主路径)** | `cli/review.py` 扩展 | `--file X --run-dir RUN` 初始化、发出首批任务后退出;`--resume --run-dir RUN` 读 `results/*.md` → advance → 写新 tasks 或产出终态。任务 = `{task_id, agent, kind, prompt_file}`,prompt 逐字落盘 |
+| **AgentTask(主路径)** | `cli/review.py` 扩展 | `--file X` 初始化、发出首批任务后退出;`--resume` 自动查找最新未完成 run,读 `results/*.md` → advance → 写新 tasks 或产出终态。任务 = `{task_id, agent, kind, prompt_file}`,prompt 逐字落盘 |
 | **InProcess(CI)** | 现有 `debate.py` | `--llm litellm` 走进程内执行;**重构为调用同一 advance 核心**,消除双实现漂移 |
 
 ### 3.3 run-dir 布局(spec FR-11)
 
 ```
-RUN/                        默认 .agent-judges/runs/<时间戳-slug>/
-  state.json                状态机状态(幂等依据)
-  input/content.md          被审查内容快照(+ context.md 可选)
-  tasks/<id>.json + .md     待执行任务清单 + 逐字 prompt
-  results/<id>.md           driver 写回的 Agent 原始输出
-  verdict.json / report.md  终态产物
+.harness/logs/judges/<时间戳-slug>/     运行时日志
+  state.json                            状态机状态(幂等依据)
+  tasks/<id>.json + .md                 待执行任务清单 + 逐字 prompt
+  results/<id>.md                       driver 写回的 Agent 原始输出
+.harness/evidence/judges/<时间戳-slug>/ 检视结果证据
+  verdict.json / report.md             终态产物
 ```
 
 **验收**:
@@ -153,11 +153,11 @@ RUN/                        默认 .agent-judges/runs/<时间戳-slug>/
 **驱动协议**(两份共享的正文骨架):
 
 ```
-1. bash: agent-judges review --file <目标> --run-dir RUN    (初始化,读输出任务清单)
+1. bash: agent-judges review --file <目标>    (初始化,读输出任务清单)
 2. 对每个任务: 原生拉起 tasks/<id>.json 指名的 Agent,
    prompt = tasks/<id>.md 内容【逐字使用,禁止改写/增删】
    Agent 最终回复原样写入 results/<id>.md
-3. bash: agent-judges review --resume --run-dir RUN
+3. bash: agent-judges review --resume
 4. 重复 2-3 直至 verdict.json 出现
 5. 汇报: findings(severity/evidence/suggestion) + escalate_to_human + route 路径审计
 

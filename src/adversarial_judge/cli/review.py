@@ -97,11 +97,8 @@ def review(
         "--llm",
         help="执行模式: agent(默认,prepare/resume 由宿主 judge-manager 驱动) | litellm(引擎进程内直连,CI/调试用)",
     ),
-    run_dir: Path | None = typer.Option(
-        None, "--run-dir", help="运行目录(agent 模式;prepare 时缺省自动创建)"
-    ),
     resume: bool = typer.Option(
-        False, "--resume", help="从运行目录恢复推进(agent 模式,需 --run-dir)"
+        False, "--resume", help="从最新运行目录恢复推进(agent 模式,自动查找未完成的 run)"
     ),
 ):
     """对抗审查: 对 AI 生成的内容进行多 agent 辩论式审查"""
@@ -156,7 +153,6 @@ def review(
             review_depth=review_depth,
             meta_review=meta_review,
             threshold=confidence_threshold,
-            run_dir_opt=run_dir,
             resume=resume,
             output_format=output_format,
             output_dir=output_dir,

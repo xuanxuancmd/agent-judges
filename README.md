@@ -32,8 +32,9 @@ agent-judges install --host opencode --project   # 显式指定/装项目级
 ```
 
 - **judge-manager**（入口 Agent）：机械执行驱动协议（拉起 reviewer Agent / 逐字传 prompt / 结果落盘 / 调引擎推进），不做任何流程决策
-- **编排权在引擎**：渐进式门控、4 阶段辩论、裁决合成全部由 `agent-judges` 的 prepare/resume 状态机确定性推进（`--run-dir` 运行目录可审计、可断点续跑）
+- **编排权在引擎**：渐进式门控、4 阶段辩论、裁决合成全部由 `agent-judges` 的 prepare/resume 状态机确定性推进（运行目录可审计、可断点续跑）
 - **reviewer 模型**：各 reviewer 的 `model` 字段写宿主命名空间（claude 系 `opus`/`sonnet`；opencode 系 `provider/model`），省略 = 宿主默认模型；异构面板保留
+- **安装布局**：所有 Agent 统一装到 `judges/` 子目录（claude-code：`.claude/agents/judges/`；opencode：`.opencode/agents/judges/`），与用户自有 Agent 区分。命名差异：claude-code 以 frontmatter `name` 为名（`spec-reviewer`）；opencode 以文件路径为名（`judges/spec-reviewer`），judge-manager 驱动协议已内置前缀映射
 - **CLI 直连模式**（`--llm litellm`）：引擎进程内直接调 LLM API，用于 CI/裸机/调试；此时凭证经环境变量（见下文）
 
 ## 安装
@@ -285,6 +286,50 @@ mypy src/adversarial_judge
 # 集成测试(需真实 API key)
 pytest tests/test_integration.py -m integration -v
 ```
+
+## E2E 测试（真实需求文档）
+
+`tests/project/` 下提供两组真实需求文档作为审查对象，各含 `spec.md`（规格）+ `plan.md`（执行计划）：
+
+| 项目 | 复杂度 | 内容 |
+|---|---|---|
+| `todo-app` | 简单 | Todo 列表应用 |
+| `graphify-gitnexus` | 复杂 | 在 graphify 图谱基础上对标 GitNexus 补齐能力 |
+
+e2e 用一个**合成 judge-manager 驱动器**（`tests/fixtures/e2e_driver.py`）逐字执行驱动协议：prepare → 读 `tasks/<id>.md` → 应答 → 写 `results/<id>.md` → resume，直到终态。应答器可插拔：固定应答（零 token，验证状态机/门控/辩论/合成/升级全链路）或真实 LLM（验证检视效果）。
+
+```bash
+# 自动 · 零 token(默认测试套件内,固定应答驱动全链路)
+pytest tests/test_e2e.py -v
+
+# 自动 · 真实 LLM · CI 回退路径(需 API key 凭证,校验 verdict 结构自洽)
+pytest tests/test_e2e.py -m integration -v
+```
+
+### 手动 · 主路径（宿主驱动，零 API key）
+
+与产品主流场景一致——LLM 能力全部来自宿主（Claude Code / OpenCode）拉起的实体 reviewer Agent，用户零模型配置：
+
+```bash
+# 1. 一次性安装: judge-manager + 全部 reviewer Agent 装入宿主(项目级)
+agent-judges install --host opencode --project   # 或 --host claude-code
+
+# 2. 新开宿主会话,直接说:
+#    "用 judge-manager 对抗审查 tests/project/todo-app/spec.md"
+#    → 宿主委派 judge-manager → 机械驱动引擎 → 终态汇报
+```
+
+也可在宿主会话中手动驱动（judge-manager 协议的人工版）：`agent-judges review --file <doc>` → 逐个拉起 reviewer 子代理（prompt 取 `<logs_dir>/tasks/<id>.md` **逐字**传递，persona 来自已安装的 Agent 定义）→ 子代理回复**原样**写 `<logs_dir>/results/<id>.md` → `agent-judges review --resume` → 循环至 done；终态产物落在 `.harness/evidence/judges/<run_id>/`（`verdict.json` + `report.md`），全程审计文件在 `.harness/logs/judges/<run_id>/`（`tasks/` + `results/` + `state.json`）。
+
+### 手动 · CI/裸机回退（`--llm litellm`，需 API key）
+
+```bash
+python scripts/e2e_review.py                                        # 两个项目 × spec/plan
+python scripts/e2e_review.py --project graphify-gitnexus --target spec --profile thorough
+python scripts/e2e_review.py --llm mock                             # 零 token 冒烟
+```
+
+自动模式覆盖的场景：干净通过（Gate 1 早停 / 长内容 standard）与 critical 发现（Gate 2 thorough：2 轮辩论 + 盲评 + 元审查校准 + 人工升级），外加 `--llm litellm` 直连路径。手动模式适合人工评估检视质量：`report.md` 含全部 findings（severity/证据/建议），`verdict.json` 含可审计的 route 与置信度链。
 
 ## 架构
 

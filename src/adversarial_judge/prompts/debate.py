@@ -35,9 +35,22 @@ def build_blind_final_system_prompt(persona: str) -> str:
 
 
 def build_blind_final_user_prompt(content: str, debated_position: str) -> str:
-    """User prompt for the blind final judgement."""
+    """User prompt for the blind final judgement.
+
+    Carries the same JSON output protocol as Phase 1 (``build_judge_prompt``):
+    in agent mode the reviewer Agent sees ONLY this prompt — without the
+    protocol it answers in prose and the verdict parse chain degrades to a
+    failed verdict (confidence 0.0).
+    """
     return (
         f"被审查内容:\n{content}\n\n"
         f"辩论后你的立场:\n{debated_position}\n\n"
-        f"请给出最终裁决(严重程度/置信度/依据/建议):"
+        f"请给出最终裁决(严重程度/置信度/依据/建议),"
+        "并用 ```json 代码块返回结构化裁决,包含:\n"
+        "- severity: critical / major / minor / pass\n"
+        "- confidence: 0.0-1.0\n"
+        "- reasoning: 推理过程\n"
+        "- findings: [{description, severity: critical/major/minor, "
+        "confidence, evidence, suggestion}]\n"
+        "- satisfied: bool"
     )

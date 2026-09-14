@@ -7,6 +7,7 @@ ever hits a real API.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -532,12 +533,10 @@ class TestAgentMode:
     def test_prepare_emits_task_manifest(self, tmp_path):
         doc = tmp_path / "spec.md"
         doc.write_text("# 规格\n系统需支持 10000 QPS。", encoding="utf-8")
-        run = tmp_path / "run"
         result = runner.invoke(
             app,
             [
                 "review", "--file", str(doc),
-                "--run-dir", str(run),
                 "--reviewers-dir", str(REVIEWERS_DIR),
             ],
         )
@@ -545,39 +544,43 @@ class TestAgentMode:
         manifest = json.loads(result.stdout)
         assert manifest["done"] is False
         assert manifest["stage"] == "awaiting_sentinel"
+        assert manifest["run_id"]
+        assert manifest["logs_dir"]
+        assert manifest["evidence_dir"]
         assert len(manifest["tasks"]) == 1
         task = manifest["tasks"][0]
         assert task["agent"] == "spec-reviewer"  # filename hint → sentinel
         assert task["prompt_file"] == "tasks/p1-spec-reviewer-v1.md"
-        # run-dir artifacts: state + verbatim prompt + input snapshot
-        assert (run / "state.json").is_file()
-        prompt = (run / "tasks" / "p1-spec-reviewer-v1.md").read_text(encoding="utf-8")
+        # logs artifacts: state + verbatim prompt
+        logs_dir = Path(manifest["logs_dir"])
+        assert (logs_dir / "state.json").is_file()
+        prompt = (logs_dir / "tasks" / "p1-spec-reviewer-v1.md").read_text(encoding="utf-8")
         assert "10000 QPS" in prompt  # verbatim content
         assert "检查清单" in prompt
-        assert "系统需支持" in (run / "input" / "content.md").read_text(encoding="utf-8")
 
     def test_resume_early_stop_produces_verdict(self, tmp_path):
         doc = tmp_path / "spec.md"
         doc.write_text("# 规格\n内容", encoding="utf-8")
-        run = tmp_path / "run"
         result = runner.invoke(
             app,
             [
                 "review", "--file", str(doc),
-                "--run-dir", str(run),
                 "--reviewers-dir", str(REVIEWERS_DIR),
             ],
         )
         assert result.exit_code == 0
+        manifest = json.loads(result.stdout)
+        logs_dir = Path(manifest["logs_dir"])
+        evidence_dir = Path(manifest["evidence_dir"])
         # driver writes the sentinel agent's raw reply
-        (run / "results").mkdir(exist_ok=True)
-        (run / "results" / "p1-spec-reviewer-v1.md").write_text(
+        (logs_dir / "results").mkdir(exist_ok=True)
+        (logs_dir / "results" / "p1-spec-reviewer-v1.md").write_text(
             VERDICT_JSON_SATISFIED, encoding="utf-8"
         )
         result = runner.invoke(
             app,
             [
-                "review", "--resume", "--run-dir", str(run),
+                "review", "--resume",
                 "--reviewers-dir", str(REVIEWERS_DIR),
             ],
         )
@@ -585,23 +588,25 @@ class TestAgentMode:
         payload = json.loads(result.stdout)
         assert payload["done"] is True
         assert payload["stage"] == "done"
-        verdict = json.loads((run / "verdict.json").read_text(encoding="utf-8"))
+        verdict = json.loads((evidence_dir / "verdict.json").read_text(encoding="utf-8"))
         assert verdict["verdict"]["severity"] == "pass"
         assert verdict["verdict"]["escalate_to_human"] is False
         assert verdict["route"]["profile"] == "fast"
         assert verdict["route"]["early_stopped"] is True
-        assert "对抗审查报告" in (run / "report.md").read_text(encoding="utf-8")
+        assert "对抗审查报告" in (evidence_dir / "report.md").read_text(encoding="utf-8")
 
     def test_resume_expansion_then_thorough(self, tmp_path):
         doc = tmp_path / "spec.md"
         doc.write_text("# 规格\n有问题", encoding="utf-8")
-        run = tmp_path / "run"
         args = ["--reviewers-dir", str(REVIEWERS_DIR)]
         result = runner.invoke(
-            app, ["review", "--file", str(doc), "--run-dir", str(run), *args]
+            app, ["review", "--file", str(doc), *args]
         )
         assert result.exit_code == 0
-        results_dir = run / "results"
+        manifest = json.loads(result.stdout)
+        logs_dir = Path(manifest["logs_dir"])
+        evidence_dir = Path(manifest["evidence_dir"])
+        results_dir = logs_dir / "results"
         results_dir.mkdir(exist_ok=True)
 
         def _feed(manifest):
@@ -618,13 +623,13 @@ class TestAgentMode:
                 break
             _feed(manifest)
             result = runner.invoke(
-                app, ["review", "--resume", "--run-dir", str(run), *args]
+                app, ["review", "--resume", *args]
             )
             assert result.exit_code == 0, result.output
         manifest = json.loads(result.stdout)
         assert manifest["done"] is True
 
-        verdict = json.loads((run / "verdict.json").read_text(encoding="utf-8"))
+        verdict = json.loads((evidence_dir / "verdict.json").read_text(encoding="utf-8"))
         assert verdict["route"]["profile"] == "thorough"
         assert len(verdict["route"]["reviewer_names"]) == 3
         assert verdict["verdict"]["severity"] == "critical"
@@ -634,30 +639,13 @@ class TestAgentMode:
         assert "meta_review" in verdict
         assert verdict["verdict"]["calibrated_confidence"] is not None
 
-    def test_resume_requires_run_dir(self):
+    def test_resume_without_prior_run_errors(self):
+        """--resume with no unfinished run → clean error."""
         result = runner.invoke(
             app, ["review", "--resume", "--reviewers-dir", str(REVIEWERS_DIR)]
         )
         assert result.exit_code == 1
-        assert "--run-dir" in result.output
-
-    def test_prepare_on_existing_run_errors(self, tmp_path):
-        doc = tmp_path / "s.md"
-        doc.write_text("x", encoding="utf-8")
-        run = tmp_path / "run"
-        result = runner.invoke(
-            app,
-            ["review", "--file", str(doc), "--run-dir", str(run),
-             "--reviewers-dir", str(REVIEWERS_DIR)],
-        )
-        assert result.exit_code == 0
-        result = runner.invoke(
-            app,
-            ["review", "--file", str(doc), "--run-dir", str(run),
-             "--reviewers-dir", str(REVIEWERS_DIR)],
-        )
-        assert result.exit_code == 1
-        assert "--resume" in result.output
+        assert "未找到" in result.output or "resume" in result.output.lower()
 
     def test_skill_adhoc_rejected_in_agent_mode(self, tmp_path):
         doc = tmp_path / "api.md"
@@ -667,7 +655,6 @@ class TestAgentMode:
             [
                 "review", "--file", str(doc),
                 "-r", "skill:api-contract-review",
-                "--run-dir", str(tmp_path / "run"),
                 "--reviewers-dir", str(REVIEWERS_DIR),
                 "--skills-dir", str(SKILLS_DIR),
             ],
@@ -690,14 +677,12 @@ class TestAgentMode:
     def test_fixed_params_prepare_full_panel(self, tmp_path):
         doc = tmp_path / "spec.md"
         doc.write_text("# 规格", encoding="utf-8")
-        run = tmp_path / "run"
         result = runner.invoke(
             app,
             [
                 "review", "--file", str(doc),
                 "-r", "spec-reviewer", "-r", "design-reviewer",
                 "--debate-rounds", "1",
-                "--run-dir", str(run),
                 "--reviewers-dir", str(REVIEWERS_DIR),
             ],
         )

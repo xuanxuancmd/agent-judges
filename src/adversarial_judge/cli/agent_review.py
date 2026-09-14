@@ -1,8 +1,14 @@
 """``agent-judges review`` — agent-driven mode (default, FR-5/FR-11).
 
-prepare: initialize a run directory, emit the first task batch, exit.
+prepare: initialize a run directory pair (logs + evidence), emit the first
+task batch, exit.
 resume: consume driver-written results, advance the state machine, emit
 the next batch or produce the terminal verdict/report.
+
+Run artifacts are split across two roots:
+
+    .harness/logs/judges/<run_id>/      state, tasks/, results/
+    .harness/evidence/judges/<run_id>/  verdict.json, report.md
 
 The judge-manager driver agent follows this loop (see
 ``integrations/<host>/agent/judge-manager.md``):
@@ -32,12 +38,12 @@ from ..output import render_json, render_markdown
 from ..reviewer import ReviewerRegistry
 from ..run_state import (
     copy_run_output,
+    find_latest_run,
     load_state,
-    new_run_dir,
+    new_run,
     read_results,
     run_dir_layout,
     save_state,
-    snapshot_input,
     write_task,
 )
 from .review_flow import FlowError, FlowRequest, resolve_flow
@@ -57,11 +63,14 @@ def _slugify(text: str) -> str:
 
 
 def _manifest(
-    run_dir: Path, stage: str, tasks: list, done: bool
+    run_id: str, stage: str, tasks: list, done: bool
 ) -> dict:
+    paths = run_dir_layout(run_id)
     return {
         "done": done,
-        "run_dir": str(run_dir),
+        "run_id": run_id,
+        "logs_dir": str(paths["logs_dir"]),
+        "evidence_dir": str(paths["evidence_dir"]),
         "stage": stage,
         "tasks": [
             {
@@ -76,9 +85,9 @@ def _manifest(
     }
 
 
-def _write_tasks(run_dir: Path, tasks: list) -> None:
+def _write_tasks(run_id: str, tasks: list) -> None:
     for t in tasks:
-        write_task(run_dir, t)
+        write_task(run_id, t)
 
 
 def run_agent_review(
@@ -93,7 +102,6 @@ def run_agent_review(
     review_depth: int | None,
     meta_review: bool,
     threshold: float,
-    run_dir_opt: Path | None,
     resume: bool,
     output_format: str,
     output_dir: Path | None,
@@ -107,27 +115,28 @@ def run_agent_review(
 
     # ------------------------------------------------------------------ #
     if resume:
-        if run_dir_opt is None:
-            _echo_err("Error: --resume 需要 --run-dir。")
+        run_id = find_latest_run()
+        if run_id is None:
+            _echo_err("Error: --resume 未找到可恢复的运行(无未完成的 run)。")
             raise typer.Exit(1)
-        state = load_state(run_dir_opt)
-        results = read_results(run_dir_opt)
+        state = load_state(run_id)
+        results = read_results(run_id)
         state, tasks = advance(state, results, configs)
-        save_state(run_dir_opt, state)
-        _write_tasks(run_dir_opt, tasks)
+        save_state(run_id, state)
+        _write_tasks(run_id, tasks)
         if state.stage != "done":
             print(
                 json.dumps(
-                    _manifest(run_dir_opt, state.stage, tasks, done=False),
+                    _manifest(run_id, state.stage, tasks, done=False),
                     ensure_ascii=False,
                 )
             )
             _echo_err(
-                f"resume: stage={state.stage}, 待执行任务 {len(tasks)} 个"
-                f" (已有结果 {len(results)} 份)"
+                f"resume: run_id={run_id} | stage={state.stage}, "
+                f"待执行任务 {len(tasks)} 个 (已有结果 {len(results)} 份)"
             )
             return
-        _emit_final(run_dir_opt, state, output_format, output_dir)
+        _emit_final(run_id, state, output_format, output_dir)
         return
 
     # ------------------------------------------------------------------ #
@@ -192,32 +201,20 @@ def run_agent_review(
             threshold=threshold,
         )
 
-    # run directory
+    # run directory pair (logs + evidence)
     label = _slugify(filename or "content")
-    if run_dir_opt is None:
-        run_dir = new_run_dir(label=label)
-    else:
-        if run_dir_layout(run_dir_opt)["state"].is_file():
-            _echo_err(
-                f"Error: {run_dir_opt} 已初始化——请用 --resume --run-dir 推进,"
-                f"或换一个新目录。"
-            )
-            raise typer.Exit(1)
-        run_dir = run_dir_opt
-        for sub in ("input", "tasks", "results"):
-            (run_dir / sub).mkdir(parents=True, exist_ok=True)
-
-    snapshot_input(run_dir, content, context)
-    save_state(run_dir, state)
-    _write_tasks(run_dir, tasks)
+    run_id = new_run(label=label)
+    state.run_id = run_id
+    save_state(run_id, state)
+    _write_tasks(run_id, tasks)
 
     print(
         json.dumps(
-            _manifest(run_dir, state.stage, tasks, done=False), ensure_ascii=False
+            _manifest(run_id, state.stage, tasks, done=False), ensure_ascii=False
         )
     )
     _echo_err(
-        f"prepare: run-dir={run_dir} | stage={state.stage} | "
+        f"prepare: run_id={run_id} | stage={state.stage} | "
         f"任务 {len(tasks)} 个"
         + (
             f" | 哨兵={state.panel[0]} (token={state.token_count})"
@@ -228,14 +225,15 @@ def run_agent_review(
 
 
 def _emit_final(
-    run_dir: Path, state, output_format: str, output_dir: Path | None
+    run_id: str, state, output_format: str, output_dir: Path | None
 ) -> None:
-    """Write verdict.json + report.md; stdout carries the driver manifest
-    (``done: true`` — the judge-manager then reads the artifacts to report)."""
+    """Write verdict.json + report.md to the evidence directory; stdout carries
+    the driver manifest (``done: true`` — the judge-manager then reads the
+    artifacts to report)."""
     result = build_result(state)
     meta_result = build_meta_result(state)
     route = build_route_decision(state)
-    paths = run_dir_layout(run_dir)
+    paths = run_dir_layout(run_id)
 
     json_out = render_json(result, state.threshold, meta_result, None, route)
     md = render_markdown(result, state.threshold, meta_result, route)
@@ -246,7 +244,9 @@ def _emit_final(
         json.dumps(
             {
                 "done": True,
-                "run_dir": str(run_dir),
+                "run_id": run_id,
+                "logs_dir": str(paths["logs_dir"]),
+                "evidence_dir": str(paths["evidence_dir"]),
                 "stage": "done",
                 "verdict_file": "verdict.json",
                 "report_file": "report.md",
@@ -259,7 +259,7 @@ def _emit_final(
         if output_dir is None:
             _echo_err("Error: --output both 需要 --output-dir")
             raise typer.Exit(1)
-        copy_run_output(run_dir, output_dir)
+        copy_run_output(run_id, output_dir)
 
     v = state.verdict
     assert v is not None

@@ -13,28 +13,30 @@ description: 对抗式多 Agent 审查(Adversarial Review)编排入口。当用�
 
 1. **初始化**(需要 `agent-judges` CLI 在 PATH 中;若不可用,如实告知用户先安装):
    ```
-   agent-judges review --file <目标文件> --run-dir <RUN>
+   agent-judges review --file <目标文件>
    ```
-   RUN 由引擎自动创建(也可显式指定)。命令向 stdout 输出 JSON 任务清单:
-   `{"done": false, "tasks": [{"task_id", "agent", "kind", "prompt_file", "result_file"}]}`
+   引擎自动创建运行目录对(.harness/logs/judges/<run_id> + .harness/evidence/judges/<run_id>)。
+   命令向 stdout 输出 JSON 任务清单:
+   `{"done": false, "run_id", "logs_dir", "evidence_dir", "tasks": [{"task_id", "agent", "kind", "prompt_file", "result_file"}]}`
 
 2. **执行任务**(可并行;已被引擎重新发出的任务,若其 result_file 已存在则跳过):
    对每个任务:
-   - 读取 `RUN/tasks/<task_id>.md` 的完整内容作为 prompt
+   - 读取 `<logs_dir>/tasks/<task_id>.md` 的完整内容作为 prompt
      【**逐字使用,禁止改写、增删、摘要**】
    - 用 Task 工具拉起 subagent:`subagent_type` = 任务的 `agent` 字段
      (如 `spec-reviewer`——这些审查 Agent 已与本 Agent 一同安装)
-   - 将 subagent 的最终回复**原样**写入 `RUN/results/<task_id>.md`
+   - 将 subagent 的最终回复**原样**写入 `<logs_dir>/results/<task_id>.md`
      (即使回复为空或报错也如实写盘——引擎会把空结果按失败降级处理)
 
 3. **推进**:
    ```
-   agent-judges review --resume --run-dir <RUN>
+   agent-judges review --resume
    ```
+   引擎自动查找最新未完成的 run。
    - 输出 `done: false` → 回到第 2 步执行新任务
    - 输出 `done: true` → 进入第 4 步
 
-4. **汇报**: 读取 `RUN/verdict.json` 与 `RUN/report.md`,向用户汇报:
+4. **汇报**: 读取 `<evidence_dir>/verdict.json` 与 `<evidence_dir>/report.md`,向用户汇报:
    - 整体 severity / confidence / 是否通过
    - 全部 findings(每条含 severity / 原文依据 evidence / 改进建议 suggestion)
    - `escalate_to_human: true` 时,明确说明**为什么需要人工裁决**

@@ -27,3 +27,15 @@ def stock_reviewers_dir() -> Path:
 @pytest.fixture(scope="session")
 def stock_skills_dir() -> Path:
     return SKILLS_DIR
+
+
+@pytest.fixture(autouse=True)
+def _isolate_harness(tmp_path, monkeypatch):
+    """Redirect .harness/logs/ and .harness/evidence/ to per-test tmp_path
+    so agent-mode runs don't pollute the repo working tree."""
+    monkeypatch.setenv(
+        "AGENT_JUDGES_LOGS_ROOT", str(tmp_path / "logs" / "judges")
+    )
+    monkeypatch.setenv(
+        "AGENT_JUDGES_EVIDENCE_ROOT", str(tmp_path / "evidence" / "judges")
+    )
