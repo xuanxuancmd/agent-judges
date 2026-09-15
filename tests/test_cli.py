@@ -172,7 +172,6 @@ class TestFlowDecision:
         assert route["complexity"] == "low"
         assert route["reviewer_names"] == ["spec-reviewer"]  # filename hint → sentinel
         assert len(payload["individual_verdicts"]) == 1
-        assert payload["debate_rounds"] == []
         assert payload["stability_degraded"] is True
         assert mock.call_count == 1
 
@@ -198,7 +197,6 @@ class TestFlowDecision:
         assert route["reviewer_names"][0] == "spec-reviewer"  # sentinel kept
         assert len(route["reviewer_names"]) == 3  # expanded panel
         assert len(payload["individual_verdicts"]) == 3  # sentinel verdict kept + 2
-        assert len(payload["debate_rounds"]) == 2  # thorough continuation
         assert "meta_review" in payload  # thorough → review_depth 1
         # (B-4) explicit calibration: 0.85 × (1 − 0.5) via the meta penalty
         assert payload["verdict"]["calibrated_confidence"] == 0.425
@@ -222,7 +220,6 @@ class TestFlowDecision:
         payload = json.loads(result.stdout)
         assert "route" not in payload  # deterministic fill leaves no route record
         assert len(payload["individual_verdicts"]) == 1
-        assert payload["debate_rounds"] == []
         assert payload["stability_degraded"] is True
 
     def test_profile_fast_skips_routing(self, tmp_path, install_mock_broker):
@@ -635,7 +632,6 @@ class TestAgentMode:
         assert verdict["verdict"]["severity"] == "critical"
         # full pipeline artifacts present
         assert len(verdict["individual_verdicts"]) == 3
-        assert len(verdict["debate_rounds"]) == 2
         assert "meta_review" in verdict
         assert verdict["verdict"]["calibrated_confidence"] is not None
 

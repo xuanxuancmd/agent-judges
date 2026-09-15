@@ -1,4 +1,4 @@
-"""``agent-judges install`` tests — golden-file checks against fake hosts."""
+"""``agent-judges install`` tests — template-copy checks per platform."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ import pytest
 from typer.testing import CliRunner
 
 from adversarial_judge.cli import app
-
-from conftest import REVIEWERS_DIR, SKILLS_DIR
 
 runner = CliRunner()
 
@@ -22,110 +20,124 @@ def fake_home(tmp_path, monkeypatch):
 
 
 def _install_args(*extra):
-    return [
-        "install",
-        "--reviewers-dir", str(REVIEWERS_DIR),
-        "--skills-dir", str(SKILLS_DIR),
-        *extra,
-    ]
+    return ["install", *extra]
 
 
-class TestClaudeCode:
-    def test_auto_detect_and_global_install(self, fake_home):
-        (fake_home / ".claude").mkdir()
+class TestCodeagent:
+    """Default platform — claude-compatible mechanism, .cac directory."""
+
+    def test_default_platform_global_install(self, fake_home):
+        """No --platform flag → codeagent (default), installs to ~/.cac."""
+        (fake_home / ".cac").mkdir()
         result = runner.invoke(app, _install_args())
         assert result.exit_code == 0, result.output
-        # namespaced under judges/ — separate from the user's own agents
-        agents_dir = fake_home / ".claude" / "agents" / "judges"
-        # judge-manager + 20 reviewers
+        agents_dir = fake_home / ".cac" / "agents" / "judges"
+        # only judge-manager + anonymous reviewer
         installed = sorted(p.stem for p in agents_dir.glob("*.md"))
-        assert "judge-manager" in installed
-        assert "spec-reviewer" in installed
-        assert "meta-reviewer" in installed
-        assert len(installed) >= 21
+        assert installed == ["judge-manager", "reviewer"]
 
-    def test_reviewer_agent_compilation(self, fake_home):
-        (fake_home / ".claude").mkdir()
+    def test_reviewer_is_anonymous(self, fake_home):
+        """reviewer.md has no persona — just a generic slot."""
+        (fake_home / ".cac").mkdir()
         result = runner.invoke(app, _install_args())
         assert result.exit_code == 0, result.output
         text = (
-            fake_home / ".claude" / "agents" / "judges" / "spec-reviewer.md"
+            fake_home / ".cac" / "agents" / "judges" / "reviewer.md"
         ).read_text(encoding="utf-8")
-        # no-direct-invoke guard in the description
-        assert text.startswith("---")
-        assert "请勿直接触发" in text
-        # persona + system-fixed judge frame merged into the body
-        assert "规格文档" in text
-        assert "审查框架" in text
-        assert "证据" in text  # the frame's evidence discipline
-        # engine-only keys are stripped from the generated frontmatter
-        assert "checklist:" not in text
-        assert "majority_vote:" not in text
-        assert "weight:" not in text
-        # claude-code identity comes from frontmatter — names stay unprefixed
-        assert "name: spec-reviewer" in text
-        # skill knowledge is injected into the persona at compile time
-        scanner = (
-            fake_home / ".claude" / "agents" / "judges"
-            / "dangerous-operation-scanner.md"
-        ).read_text(encoding="utf-8")
-        assert "危险操作模式清单" in scanner  # dangerous-operations skill body
+        assert "匿名审查槽位" in text
+        # no reviewer persona content (spec-reviewer persona, etc.)
+        assert "规格文档" not in text
+        assert "需求收集" not in text
 
-    def test_model_passthrough(self, fake_home, tmp_path):
-        (fake_home / ".claude").mkdir()
-        src = tmp_path / "reviewers"
-        src.mkdir()
-        (src / "m1.md").write_text(
-            "---\nname: m1\ndescription: d\nmodel: opus\n"
-            "checklist:\n  - criteria: c\n---\n\npersona\n",
-            encoding="utf-8",
-        )
-        result = runner.invoke(app, ["install", "--reviewers-dir", str(src)])
+    def test_judge_manager_template(self, fake_home):
+        """judge-manager.md spawns the anonymous 'reviewer' subagent."""
+        (fake_home / ".cac").mkdir()
+        result = runner.invoke(app, _install_args())
         assert result.exit_code == 0, result.output
         text = (
-            fake_home / ".claude" / "agents" / "judges" / "m1.md"
+            fake_home / ".cac" / "agents" / "judges" / "judge-manager.md"
         ).read_text(encoding="utf-8")
-        assert "model: opus" in text  # host-namespace model passed through
+        assert "subagent_type" in text
+        assert "reviewer" in text
+        assert "agent-judges review --file" in text
 
     def test_project_scope(self, fake_home, monkeypatch, tmp_path):
-        (fake_home / ".claude").mkdir()
+        (fake_home / ".cac").mkdir()
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, _install_args("--project"))
         assert result.exit_code == 0, result.output
-        assert (tmp_path / ".claude" / "agents" / "judges" / "judge-manager.md").is_file()
+        assert (tmp_path / ".cac" / "agents" / "judges" / "judge-manager.md").is_file()
+        assert (tmp_path / ".cac" / "agents" / "judges" / "reviewer.md").is_file()
+
+    def test_explicit_platform_codeagent(self, fake_home):
+        """--platform codeagent works even without .cac directory."""
+        result = runner.invoke(app, _install_args("--platform", "codeagent"))
+        assert result.exit_code == 0, result.output
+        agents_dir = fake_home / ".cac" / "agents" / "judges"
+        assert (agents_dir / "judge-manager.md").is_file()
+        assert (agents_dir / "reviewer.md").is_file()
+
+
+class TestClaudeCode:
+    """Backward-compat: --platform claude-code → .claude directory."""
+
+    def test_claude_code_global_install(self, fake_home):
+        result = runner.invoke(app, _install_args("--platform", "claude-code"))
+        assert result.exit_code == 0, result.output
+        agents_dir = fake_home / ".claude" / "agents" / "judges"
+        installed = sorted(p.stem for p in agents_dir.glob("*.md"))
+        assert installed == ["judge-manager", "reviewer"]
+
+    def test_host_alias_backward_compat(self, fake_home):
+        """--host is a deprecated alias for --platform."""
+        result = runner.invoke(app, _install_args("--host", "claude-code"))
+        assert result.exit_code == 0, result.output
+        agents_dir = fake_home / ".claude" / "agents" / "judges"
+        assert (agents_dir / "judge-manager.md").is_file()
 
 
 class TestOpenCode:
-    def test_global_install_with_subagent_mode(self, fake_home):
-        (fake_home / ".config" / "opencode").mkdir(parents=True)
-        result = runner.invoke(app, _install_args("--host", "opencode"))
+    def test_opencode_global_install(self, fake_home):
+        result = runner.invoke(app, _install_args("--platform", "opencode"))
         assert result.exit_code == 0, result.output
-        # docs-canonical agents/ dir + judges/ namespace
         agents_dir = fake_home / ".config" / "opencode" / "agents" / "judges"
         assert (agents_dir / "judge-manager.md").is_file()
-        text = (agents_dir / "spec-reviewer.md").read_text(encoding="utf-8")
-        assert "mode: subagent" in text  # opencode reviewers are not user-facing
+        # reviewer has mode: subagent
+        text = (agents_dir / "reviewer.md").read_text(encoding="utf-8")
+        assert "mode: subagent" in text
         judge = (agents_dir / "judge-manager.md").read_text(encoding="utf-8")
-        assert "mode: all" in judge  # judge-manager is both primary and subagent
-        assert "agent-judges review --file" in judge  # driver protocol text
-        # opencode names come from the file path → the driver must map the
-        # engine's agent field onto the judges/ namespace
-        assert '"judges/" + 任务的 agent 字段' in judge
+        assert "mode: all" in judge
+        assert "judges/reviewer" in judge  # opencode path-based identity
+        assert "agent-judges review --file" in judge
 
 
-class TestDetectionErrors:
-    def test_both_hosts_require_explicit(self, fake_home):
-        (fake_home / ".claude").mkdir()
+class TestAutoDetect:
+    def test_auto_detect_codeagent(self, fake_home):
+        (fake_home / ".cac").mkdir()
+        result = runner.invoke(app, _install_args("--platform", "auto"))
+        assert result.exit_code == 0, result.output
+        assert (fake_home / ".cac" / "agents" / "judges" / "judge-manager.md").is_file()
+
+    def test_auto_detect_opencode(self, fake_home):
         (fake_home / ".config" / "opencode").mkdir(parents=True)
-        result = runner.invoke(app, _install_args())
-        assert result.exit_code != 0
-        assert "--host" in result.output
+        result = runner.invoke(app, _install_args("--platform", "auto"))
+        assert result.exit_code == 0, result.output
+        assert (
+            fake_home / ".config" / "opencode" / "agents" / "judges" / "judge-manager.md"
+        ).is_file()
 
-    def test_no_host_errors(self, fake_home):
-        result = runner.invoke(app, _install_args())
+    def test_multiple_platforms_require_explicit(self, fake_home):
+        (fake_home / ".cac").mkdir()
+        (fake_home / ".config" / "opencode").mkdir(parents=True)
+        result = runner.invoke(app, _install_args("--platform", "auto"))
         assert result.exit_code != 0
-        assert "--host" in result.output
+        assert "--platform" in result.output
 
-    def test_unknown_host_errors(self, fake_home):
-        result = runner.invoke(app, _install_args("--host", "vscode"))
+    def test_no_platform_errors(self, fake_home):
+        result = runner.invoke(app, _install_args("--platform", "auto"))
+        assert result.exit_code != 0
+        assert "--platform" in result.output
+
+    def test_unknown_platform_errors(self, fake_home):
+        result = runner.invoke(app, _install_args("--platform", "vscode"))
         assert result.exit_code != 0

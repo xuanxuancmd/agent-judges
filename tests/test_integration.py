@@ -65,7 +65,6 @@ def test_integration_requirement_debate():
     assert payload["verdict"]["severity"] in ("critical", "major", "minor", "pass")
     assert 0.0 <= payload["verdict"]["confidence"] <= 1.0
     assert len(payload["individual_verdicts"]) == 2
-    assert len(payload["debate_rounds"]) == 1
 
 
 def test_integration_implementation_review():

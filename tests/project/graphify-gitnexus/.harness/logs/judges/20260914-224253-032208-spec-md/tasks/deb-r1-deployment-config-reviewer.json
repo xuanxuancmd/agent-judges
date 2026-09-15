@@ -1,0 +1,6 @@
+{
+  "task_id": "deb-r1-deployment-config-reviewer",
+  "agent": "deployment-config-reviewer",
+  "kind": "debate",
+  "prompt_file": "deb-r1-deployment-config-reviewer.md"
+}

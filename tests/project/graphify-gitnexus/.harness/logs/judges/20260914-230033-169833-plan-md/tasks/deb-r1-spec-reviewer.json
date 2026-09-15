@@ -1,0 +1,6 @@
+{
+  "task_id": "deb-r1-spec-reviewer",
+  "agent": "spec-reviewer",
+  "kind": "debate",
+  "prompt_file": "deb-r1-spec-reviewer.md"
+}

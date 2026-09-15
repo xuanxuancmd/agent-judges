@@ -93,9 +93,11 @@ def assert_thorough_chain(outcome) -> None:
     assert v["escalate_to_human"] is True
     assert "meta_review" in payload
     assert payload["meta_review"]["verdict"]["severity"] in _SEVERITIES
-    # 4-phase debate: thorough plans 2 rounds
-    assert len(payload["debate_rounds"]) == 2
+    # individual verdicts are summary-only (no reasoning/findings in JSON)
     assert len(payload["individual_verdicts"]) >= 2
+    assert "severity" in payload["individual_verdicts"][0]
+    assert "confidence" in payload["individual_verdicts"][0]
+    assert "reasoning" not in payload["individual_verdicts"][0]
 
 
 def assert_verdict_shape(payload: dict) -> None:
@@ -242,7 +244,6 @@ class TestLitellmDirectPathE2E:
         payload = json.loads(result.stdout)
         assert payload["verdict"]["severity"] == "critical"
         assert len(payload["individual_verdicts"]) == 2
-        assert len(payload["debate_rounds"]) == 1
 
 
 # --- automated e2e: real LLM (integration marker) ----------------------------

@@ -11,7 +11,7 @@ packages = [{ include = "adversarial_judge", from = "src" }]
 # litellm requires python >=3.10,<3.15 — keep the project range inside it
 python = ">=3.11,<3.15"
 litellm = ">=1.100.0"
-tenacity = ">=9.0.0"
+tenacity = ">=8.2.3"
 pydantic = ">=2.0"
 typer = ">=0.12"
 rich = ">=13.0"

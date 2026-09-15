@@ -1,0 +1,6 @@
+{
+  "task_id": "fin-spec-reviewer",
+  "agent": "spec-reviewer",
+  "kind": "blind_final",
+  "prompt_file": "fin-spec-reviewer.md"
+}

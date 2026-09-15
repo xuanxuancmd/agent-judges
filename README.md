@@ -19,22 +19,23 @@
 
 ## 宿主集成（推荐用法，v2）
 
-主流用法是在 **Claude Code / OpenCode 会话内**触发审查：LLM 模型、凭证、额度全部来自宿主已有配置，用户零模型配置。
+主流用法是在 **CodeAgent / Claude Code / OpenCode 会话内**触发审查：LLM 模型、凭证、额度全部来自宿主已有配置，用户零模型配置。
 
 ```bash
-# 一次性安装:judge-manager + 全部 reviewer Agent 装入宿主
-agent-judges install                      # 自动探测宿主(claude-code/opencode)
-agent-judges install --host opencode --project   # 显式指定/装项目级
+# 一次性安装:judge-manager + 匿名 reviewer Agent 装入宿主
+agent-judges install                      # 默认 codeagent 平台(.cac 目录)
+agent-judges install --platform opencode --project   # 显式指定/装项目级
 
 # 之后在宿主会话里直接说:
 #   "帮我对抗审查这份 spec.md"
-# → 宿主委派 judge-manager → 经 agent-judges 引擎驱动多 reviewer 辩论 → 汇报
+# → 宿主委派 judge-manager → 经 agent-judges 引擎驱动匿名 reviewer 辩论 → 汇报
 ```
 
-- **judge-manager**（入口 Agent）：机械执行驱动协议（拉起 reviewer Agent / 逐字传 prompt / 结果落盘 / 调引擎推进），不做任何流程决策
+- **judge-manager**（入口 Agent）：机械执行驱动协议（拉起匿名 reviewer Agent / 逐字传 prompt / 结果落盘 / 调引擎推进），不做任何流程决策
+- **匿名 reviewer Agent**：安装时只装一个无 persona 的通用审查槽位；引擎在发出任务时将 reviewer 的 persona + 系统固定审查框架编译进 task prompt，judge-manager 逐字传给匿名 reviewer 执行
 - **编排权在引擎**：渐进式门控、4 阶段辩论、裁决合成全部由 `agent-judges` 的 prepare/resume 状态机确定性推进（运行目录可审计、可断点续跑）
-- **reviewer 模型**：各 reviewer 的 `model` 字段写宿主命名空间（claude 系 `opus`/`sonnet`；opencode 系 `provider/model`），省略 = 宿主默认模型；异构面板保留
-- **安装布局**：所有 Agent 统一装到 `judges/` 子目录（claude-code：`.claude/agents/judges/`；opencode：`.opencode/agents/judges/`），与用户自有 Agent 区分。命名差异：claude-code 以 frontmatter `name` 为名（`spec-reviewer`）；opencode 以文件路径为名（`judges/spec-reviewer`），judge-manager 驱动协议已内置前缀映射
+- **平台支持**：`codeagent`（默认，claude 兼容机制，`.cac` 目录）、`claude-code`（`.claude` 目录）、`opencode`（`.config/opencode` 目录）。`--host` 为 `--platform` 的向后兼容别名
+- **安装布局**：所有 Agent 统一装到 `judges/` 子目录（codeagent：`.cac/agents/judges/`；claude-code：`.claude/agents/judges/`；opencode：`.opencode/agents/judges/`），与用户自有 Agent 区分。只安装 2 个 Agent：`judge-manager`（对外）+ `reviewer`（匿名槽位，不对外）
 - **CLI 直连模式**（`--llm litellm`）：引擎进程内直接调 LLM API，用于 CI/裸机/调试；此时凭证经环境变量（见下文）
 
 ## 安装
@@ -308,18 +309,18 @@ pytest tests/test_e2e.py -m integration -v
 
 ### 手动 · 主路径（宿主驱动，零 API key）
 
-与产品主流场景一致——LLM 能力全部来自宿主（Claude Code / OpenCode）拉起的实体 reviewer Agent，用户零模型配置：
+与产品主流场景一致——LLM 能力全部来自宿主（CodeAgent / Claude Code / OpenCode）拉起的匿名 reviewer Agent，用户零模型配置：
 
 ```bash
-# 1. 一次性安装: judge-manager + 全部 reviewer Agent 装入宿主(项目级)
-agent-judges install --host opencode --project   # 或 --host claude-code
+# 1. 一次性安装: judge-manager + 匿名 reviewer Agent 装入宿主(项目级)
+agent-judges install --platform opencode --project   # 或 --platform claude-code
 
 # 2. 新开宿主会话,直接说:
 #    "用 judge-manager 对抗审查 tests/project/todo-app/spec.md"
 #    → 宿主委派 judge-manager → 机械驱动引擎 → 终态汇报
 ```
 
-也可在宿主会话中手动驱动（judge-manager 协议的人工版）：`agent-judges review --file <doc>` → 逐个拉起 reviewer 子代理（prompt 取 `<logs_dir>/tasks/<id>.md` **逐字**传递，persona 来自已安装的 Agent 定义）→ 子代理回复**原样**写 `<logs_dir>/results/<id>.md` → `agent-judges review --resume` → 循环至 done；终态产物落在 `.harness/evidence/judges/<run_id>/`（`verdict.json` + `report.md`），全程审计文件在 `.harness/logs/judges/<run_id>/`（`tasks/` + `results/` + `state.json`）。
+也可在宿主会话中手动驱动（judge-manager 协议的人工版）：`agent-judges review --file <doc>` → 逐个拉起匿名 reviewer 子代理（prompt 取 `<logs_dir>/tasks/<id>.md` **逐字**传递，prompt 已含 reviewer persona + 审查框架 + 审查任务）→ 子代理回复**原样**写 `<logs_dir>/results/<id>.md` → `agent-judges review --resume` → 循环至 done；终态产物落在 `.harness/evidence/judges/<run_id>/`（`verdict.json` + `report.md`），全程审计文件在 `.harness/logs/judges/<run_id>/`（`tasks/` + `results/` + `state.json`）。
 
 ### 手动 · CI/裸机回退（`--llm litellm`，需 API key）
 

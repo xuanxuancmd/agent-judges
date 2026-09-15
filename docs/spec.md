@@ -217,8 +217,8 @@ JSON Verdict 核心字段:
 
 主流场景下,全部 reviewer 的 LLM 能力(模型、凭证、额度)来自宿主 agent 已有配置,系统不得要求用户单独配置模型串或 API key。
 
-- **执行载体**:每次 reviewer 调用 = 宿主内拉起一个实体 reviewer Agent(FR-10 安装产物);模型由 Agent 定义文件的 `model` 字段声明(**宿主命名空间**),未声明 = 宿主默认模型
-- **宿主命名空间**:claude 系宿主仅支持 Anthropic 系模型(`opus`/`sonnet`/完整模型 ID);opencode 系宿主支持其已配置的任意 provider(`provider/model` 格式,含自定义网关)。**异构面板**(不同角色不同模型形成对抗)在两个宿主下均须保留
+- **执行载体**:每次 reviewer 调用 = 宿主内拉起一个匿名 reviewer Agent(FR-10 安装产物);reviewer 的 persona + 审查框架由引擎编译进 task prompt,judge-manager 逐字传给匿名 reviewer 执行;未声明 `model` = 宿主默认模型
+- **宿主命名空间**:codeagent/claude-code 系宿主仅支持 Anthropic 系模型(`opus`/`sonnet`/完整模型 ID);opencode 系宿主支持其已配置的任意 provider(`provider/model` 格式,含自定义网关)。**异构面板**(不同角色不同模型形成对抗)在 litellm 直连模式下完整保留;agent 驱动模式下 reviewer 使用宿主默认模型(匿名槽位),如需异构模型请用 `--llm litellm`
 - **凭证**:完全由宿主管理(登录态/订阅额度/provider key),引擎不接触、不解析、不存储任何凭证
 - **litellm 直连回退**:`--llm litellm` 强制走引擎内置 litellm 后端,服务 CI/无宿主场景;此时模型串为 litellm 命名空间,凭证经环境变量
 - 主路径不引入宿主专有的 headless CLI 依赖(见 NFR-7)
@@ -236,7 +236,7 @@ JSON Verdict 核心字段:
 
 ### FR-5: 入口形态——judge-manager 主 Agent;CLI 为引擎与安装器
 
-- **主流入口**:宿主内的 `judge-manager` 实体 Agent(FR-10 安装)。职责仅限:初始化运行 → 按引擎指令机械执行(拉起 reviewer Agent / 落盘结果 / 调用引擎推进)→ 终态向用户汇报(findings 摘要 / escalate 标记 / route 路径审计)。**不安装宿主 skill**——意图匹配由 judge-manager 的 description 完成
+- **主流入口**:宿主内的 `judge-manager` 实体 Agent(FR-10 安装)。职责仅限:初始化运行 → 按引擎指令机械执行(拉起匿名 reviewer Agent / 落盘结果 / 调用引擎推进)→ 终态向用户汇报(findings 摘要 / escalate 标记 / route 路径审计)。**不安装宿主 skill**——意图匹配由 judge-manager 的 description 完成
 - **引擎 CLI**:命令全称 **`agent-judges`**(避免短名冲突,废弃 `aj`)。子命令:`review`(审查)/ `install`(安装,FR-10)/ `list-reviewers` / `list-skills` / `inspect-reviewer` / `evaluate`
 - `review` 支持三种输入:`--content` / `--file` / stdin 管道;`--file` 的 `.json` 后缀自动提取 verdict 文本(元审查场景)
 - **零参数即全自动**:`agent-judges review --file x.md` 不带流程参数时走渐进式审查(FR-2),全程用户零决策;`--profile fast/standard/thorough` 显式选档;细粒度参数跳过渐进式,按指定参数执行
@@ -290,14 +290,15 @@ JSON Verdict 核心字段:
 
 > **输出语义**:`--output markdown` → Markdown 到 stdout;`--output json` → JSON 到 stdout;`--output both` → 写两个文件(`report.md` + `verdict.json`)到 `--output-dir` 指定目录。JSON **不输出到 stderr**(stderr 仅供日志/进度,避免管道冲突)。
 
-### FR-10: 安装与宿主工件(`agent-judges install`)
+### FR-10: 安装与平台工件(`agent-judges install`)
 
-- 命令:`agent-judges install [--host auto|claude-code|opencode] [--global|--project] [--reviewers-dir DIR]`
-- **安装产物**(默认装宿主全局目录;`--project` 装项目级):
-  - `judge-manager` 主 Agent(来自 `integrations/<host>/agent/judge-manager.md` 模板)
-  - 全部 reviewer Agent(含 meta-reviewer),由 `reviewers/*.md` 源**生成**:保留 `name` / `model`(宿主命名空间)/ `description` / 正文;正文 = persona + 系统固定审查框架;剥离 `checklist`/`weight`/`majority_vote`/`skills` 等引擎专有键
-  - **防直接触发**:生成的 reviewer description 必须注明"内部审查组件,由 judge-manager 经引擎编排调用,请勿直接触发";opencode 侧 reviewer 加 `mode: subagent`
-- 安装产物是**编译产物**:`reviewers/*.md` 与 `integrations/` 是唯一真相,修改源后重新 install 生效
+- 命令:`agent-judges install [--platform codeagent|claude-code|opencode|auto] [--project]`
+- 默认平台 `codeagent`(claude 兼容机制,目录为 `.cac`);`--host` 为 `--platform` 的向后兼容别名
+- **安装产物**(默认装平台全局目录;`--project` 装项目级),只装 2 个 Agent:
+  - `judge-manager` 主 Agent(来自 `integrations/<platform>/agent/judge-manager.md` 模板)——对外可见的入口
+  - `reviewer` 匿名审查槽位(来自 `integrations/<platform>/agent/reviewer.md` 模板)——无 persona 的通用槽位,不直接面向用户
+- **匿名 reviewer 设计**:reviewer 的 persona + 系统固定审查框架由引擎在发出任务时编译进 task prompt(`tasks/<task_id>.md`),judge-manager 逐字传给匿名 `reviewer` Agent 执行;安装时不再从 `reviewers/*.md` 生成逐个 reviewer Agent 文件
+- 安装产物是**编译产物**:`integrations/<platform>/agent/` 模板是唯一真相,修改模板后重新 install 生效
 - 幂等:重复 install 覆盖并提示,输出安装清单
 
 ### FR-11: 执行模型——prepare/resume 状态机
@@ -355,7 +356,7 @@ JSON Verdict 核心字段:
 
 ### NFR-7: 宿主可迁移性
 
-主路径(agent 驱动模式)对宿主的依赖收敛为三项公共能力:①Agent 定义文件(Markdown + frontmatter,业界事实标准)②原生 subagent 拉起 ③shell。**不得引入宿主专有的 headless CLI 调用**(如 `claude -p` / `opencode run`——各家旗标差异是迁移阻碍);新增宿主支持 = 新写一份 judge-manager 驱动定义 + install 适配器,引擎与 reviewer 源零改动。
+主路径(agent 驱动模式)对宿主的依赖收敛为三项公共能力:①Agent 定义文件(Markdown + frontmatter,业界事实标准)②原生 subagent 拉起 ③shell。**不得引入宿主专有的 headless CLI 调用**(如 `claude -p` / `opencode run`——各家旗标差异是迁移阻碍);新增平台支持 = 新写一份 judge-manager + reviewer 驱动定义模板(`integrations/<platform>/agent/`),引擎与 reviewer 源零改动。
 
 ---
 
@@ -445,7 +446,7 @@ skill frontmatter 可携带 `checklist` 字段,支持即席加载时作为检查
 | **哨兵 (sentinel)** | 渐进式审查中第一个独立评审的 reviewer(按文件名/内容提示确定性选定);其高置信干净通过是早停的必要条件 |
 | **skill (审查 skill)** | 用户自定义的审查知识/指令包(SKILL.md 格式),由匿名 reviewer 槽位加载。知识注入型,不含工具执行;可被 reviewer 模板引用或 `-r skill:<name>` 即席加载 |
 | **judge-manager** | 宿主内实体主 Agent(install 安装产物):机械执行驱动协议(拉起 reviewer Agent / 落盘 / 调引擎推进),终态向用户汇报;不做任何编排决策 |
-| **实体 reviewer Agent** | 安装进宿主的 reviewer 实例(Agent 定义文件),模型由其 frontmatter 声明(宿主命名空间);由 judge-manager 按引擎任务拉起,不直接面向用户 |
+| **实体 reviewer Agent** | 安装进宿主的匿名 reviewer 实例(Agent 定义文件,无 persona);由 judge-manager 按引擎任务拉起,reviewer 的 persona 由引擎编译进 task prompt 逐字传递,不直接面向用户 |
 | **run-dir / prepare-resume** | 一次审查的运行目录与引擎状态机接口:prepare 发出任务后退出,resume 消费结果确定性推进(FR-11)。运行状态可审计、可断点续跑 |
 | **主动验证 (active verification)** | 引擎在调 reviewer 前从 graphify 知识图谱收集代码结构证据(调用链、依赖关系),注入 reviewer prompt 的 context 部分。reviewer 仍为纯 LLM,不执行工具,但 prompt 里多了代码结构证据。graphify 不存在时静默降级为纯 LLM 模式 |
 | **证据注入 (evidence injection)** | 主动验证的实现方式:证据收集发生在 reviewer 调用之前,证据以文本形式拼入 prompt,reviewer 无感知证据来源。区别于"工具执行"(reviewer 自己调工具),证据注入不改变纯 LLM 范式 |
@@ -458,14 +459,14 @@ skill frontmatter 可携带 `checklist` 字段,支持即席加载时作为检查
 ### 9.1 安装
 
 ```bash
-# 自动探测宿主(claude-code/opencode),装全局
+# 默认 codeagent 平台(.cac 目录),装全局
 agent-judges install
 
-# 显式指定宿主,装项目级
-agent-judges install --host opencode --project
+# 显式指定平台,装项目级
+agent-judges install --platform opencode --project
 ```
 
-安装产物:judge-manager Agent + 全部 reviewer Agent(含 meta-reviewer)。安装产物是编译产物,修改 `reviewers/*.md` 或 `integrations/` 源后重新 install 生效。之后在宿主会话里直接说"帮我对抗审查这份 spec.md",宿主委派 judge-manager 完成审查。
+安装产物:judge-manager Agent + 匿名 reviewer Agent(仅 2 个)。安装产物是编译产物,修改 `integrations/<platform>/agent/` 模板后重新 install 生效。reviewer 的 persona 在运行时由引擎编译进 task prompt,不需要为每个 reviewer 安装单独的 Agent 文件。之后在宿主会话里直接说"帮我对抗审查这份 spec.md",宿主委派 judge-manager 完成审查。
 
 ### 9.2 凭证继承
 

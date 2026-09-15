@@ -35,9 +35,12 @@ from .meta_review import (
     serialize_verdict,
 )
 from .prompts.debate import (
+    build_blind_final_system_prompt,
     build_blind_final_user_prompt,
+    build_debate_system_prompt,
     build_debate_user_prompt,
 )
+from .prompts.judge_system import build_system_prompt
 from .prompts.judge_user import build_judge_prompt
 from .progressive import (
     TIER_RANK,
@@ -252,10 +255,10 @@ def _on_panel(
     if len(state.panel) >= 2 and state.planned_debate_rounds > 0:
         state.stage = Stage.AWAITING_DEBATE
         state.rounds_done = 0
-        return state, _emit_debate_round(state, round_index=1)
+        return state, _emit_debate_round(state, configs, round_index=1)
     if len(state.panel) >= 2:
         state.stage = Stage.AWAITING_FINAL
-        return state, _emit_final(state)
+        return state, _emit_final(state, configs)
     # single-reviewer fast-check form: skip debate and blind final
     _synthesize_final(state, configs, panel_verdicts, finals=None, stability_degraded=True)
     if state.planned_review_depth > 0:
@@ -272,7 +275,7 @@ def _on_debate(
     ids = {n: f"deb-r{round_index}-{n}" for n in state.panel}
     pending = [n for n, i in ids.items() if i not in results]
     if pending:
-        return state, _emit_debate_round(state, round_index)
+        return state, _emit_debate_round(state, configs, round_index)
 
     positions = [
         results[ids[n]] if results[ids[n]].strip() else _current_position(state, n)
@@ -282,9 +285,9 @@ def _on_debate(
     state.rounds_done = round_index
 
     if round_index < state.planned_debate_rounds:
-        return state, _emit_debate_round(state, round_index + 1)
+        return state, _emit_debate_round(state, configs, round_index + 1)
     state.stage = Stage.AWAITING_FINAL
-    return state, _emit_final(state)
+    return state, _emit_final(state, configs)
 
 
 def _on_final(
@@ -419,6 +422,17 @@ def _on_meta_final(
 # --- task emitters ---------------------------------------------------------
 
 
+def _full_prompt(system: str, user: str) -> str:
+    """Combine system prompt (persona + judge frame) with user prompt.
+
+    In the anonymous-agent design the reviewer persona is NOT in the agent
+    definition — it is compiled into the task prompt at emit time. The
+    judge-manager driver passes this combined prompt verbatim to the
+    anonymous ``reviewer`` subagent.
+    """
+    return f"{system}\n\n---\n\n{user}"
+
+
 def _emit_phase1(
     state: RunState, configs: dict[str, ReviewerConfig], names: list[str]
 ) -> _TaskList:
@@ -426,7 +440,9 @@ def _emit_phase1(
     for n in names:
         cfg = configs[n]
         votes = max(1, state.majority_votes.get(n, 1))
-        prompt = build_judge_prompt(state.content, cfg.checklist, state.context)
+        system = build_system_prompt(cfg.system_prompt)
+        user = build_judge_prompt(state.content, cfg.checklist, state.context)
+        prompt = _full_prompt(system, user)
         kind = (
             TaskKind.SENTINEL_REVIEW
             if state.stage == Stage.AWAITING_SENTINEL
@@ -444,15 +460,20 @@ def _emit_phase1(
     return tasks
 
 
-def _emit_debate_round(state: RunState, round_index: int) -> _TaskList:
+def _emit_debate_round(
+    state: RunState, configs: dict[str, ReviewerConfig], round_index: int
+) -> _TaskList:
     tasks: _TaskList = []
     for i, n in enumerate(state.panel):
+        cfg = configs[n]
         others = "\n".join(
             f"[{state.panel[j]}]: {_current_position(state, state.panel[j])}"
             for j in range(len(state.panel))
             if j != i
         )
-        prompt = build_debate_user_prompt(state.content, others)
+        system = build_debate_system_prompt(cfg.system_prompt)
+        user = build_debate_user_prompt(state.content, others)
+        prompt = _full_prompt(system, user)
         tasks.append(
             AgentTask(
                 task_id=f"deb-r{round_index}-{n}",
@@ -464,10 +485,15 @@ def _emit_debate_round(state: RunState, round_index: int) -> _TaskList:
     return tasks
 
 
-def _emit_final(state: RunState) -> _TaskList:
+def _emit_final(
+    state: RunState, configs: dict[str, ReviewerConfig]
+) -> _TaskList:
     tasks: _TaskList = []
     for n in state.panel:
-        prompt = build_blind_final_user_prompt(state.content, _current_position(state, n))
+        cfg = configs[n]
+        system = build_blind_final_system_prompt(cfg.system_prompt)
+        user = build_blind_final_user_prompt(state.content, _current_position(state, n))
+        prompt = _full_prompt(system, user)
         tasks.append(
             AgentTask(task_id=f"fin-{n}", agent=n, kind=TaskKind.BLIND_FINAL, prompt=prompt)
         )
@@ -485,7 +511,9 @@ def _emit_meta(
             continue
         cfg = configs[n]
         votes = max(1, state.majority_votes.get(n, 1))
-        prompt = build_judge_prompt(meta_content, cfg.checklist, state.content)
+        system = build_system_prompt(cfg.system_prompt)
+        user = build_judge_prompt(meta_content, cfg.checklist, state.context)
+        prompt = _full_prompt(system, user)
         for k in range(1, votes + 1):
             tasks.append(
                 AgentTask(
@@ -506,12 +534,15 @@ def _emit_meta_debate(
     meta_content = serialize_verdict(state.verdict, state.content)
     tasks: _TaskList = []
     for i, n in enumerate(state.meta_names):
+        cfg = configs[n]
         others = "\n".join(
             f"[{state.meta_names[j]}]: {_meta_position(state, state.meta_names[j])}"
             for j in range(len(state.meta_names))
             if j != i
         )
-        prompt = build_debate_user_prompt(meta_content, others)
+        system = build_debate_system_prompt(cfg.system_prompt)
+        user = build_debate_user_prompt(meta_content, others)
+        prompt = _full_prompt(system, user)
         tasks.append(
             AgentTask(
                 task_id=f"meta-deb-r{round_index}-{n}",
@@ -531,9 +562,12 @@ def _emit_meta_final(
     meta_content = serialize_verdict(state.verdict, state.content)
     tasks: _TaskList = []
     for n in state.meta_names:
-        prompt = build_blind_final_user_prompt(
+        cfg = configs[n]
+        system = build_blind_final_system_prompt(cfg.system_prompt)
+        user = build_blind_final_user_prompt(
             meta_content, _meta_position(state, n)
         )
+        prompt = _full_prompt(system, user)
         tasks.append(
             AgentTask(
                 task_id=f"meta-fin-{layer}-{n}",

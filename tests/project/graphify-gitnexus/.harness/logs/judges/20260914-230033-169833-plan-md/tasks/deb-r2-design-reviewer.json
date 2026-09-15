@@ -1,0 +1,6 @@
+{
+  "task_id": "deb-r2-design-reviewer",
+  "agent": "design-reviewer",
+  "kind": "debate",
+  "prompt_file": "deb-r2-design-reviewer.md"
+}

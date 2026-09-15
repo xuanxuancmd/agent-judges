@@ -1,0 +1,6 @@
+{
+  "task_id": "meta-deb-r1-meta-reviewer",
+  "agent": "meta-reviewer",
+  "kind": "meta_debate",
+  "prompt_file": "meta-deb-r1-meta-reviewer.md"
+}

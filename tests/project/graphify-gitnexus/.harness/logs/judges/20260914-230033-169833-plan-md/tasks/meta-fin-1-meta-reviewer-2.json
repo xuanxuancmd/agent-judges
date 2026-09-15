@@ -1,0 +1,6 @@
+{
+  "task_id": "meta-fin-1-meta-reviewer-2",
+  "agent": "meta-reviewer-2",
+  "kind": "meta_blind_final",
+  "prompt_file": "meta-fin-1-meta-reviewer-2.md"
+}

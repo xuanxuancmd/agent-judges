@@ -140,9 +140,8 @@ class MockScenarioAnswerer:
 
 
 class LitellmAnswerer:
-    """Real-LLM answering: persona from the reviewer registry (simulating the
-    host's installed reviewer Agent definition), task prompt passed through
-    verbatim (truncation-guarded)."""
+    """Real-LLM answering: task prompt includes the reviewer persona + judge
+    frame (anonymous-agent design), passed through verbatim (truncation-guarded)."""
 
     def __init__(
         self,
@@ -152,10 +151,8 @@ class LitellmAnswerer:
         max_prompt_tokens: int = 50000,
     ):
         from adversarial_judge.llm.provider import LLM
-        from adversarial_judge.reviewer import ReviewerRegistry
 
         self._llm = LLM(model=model, base_url=base_url)
-        self._registry = ReviewerRegistry(REVIEWERS_DIR, skills_dir=SKILLS_DIR)
         self._max_calls = max_calls
         self._max_prompt_tokens = max_prompt_tokens
         self.calls = 0
@@ -166,14 +163,12 @@ class LitellmAnswerer:
                 f"e2e driver exceeded max_calls={self._max_calls} LLM calls — "
                 "aborting the run (raise --max-calls if this was expected)"
             )
-        system = ""
-        try:
-            system = self._registry.get(task["agent"]).system_prompt
-        except KeyError:
-            pass  # unknown agent (e.g. host-only reviewer): answer generically
+        # The engine compiles the reviewer persona + system-fixed judge frame
+        # into the task prompt (anonymous-agent design). Pass the full prompt
+        # as the user message — no separate system prompt lookup needed.
         user = truncate_string(prompt, max_tokens=self._max_prompt_tokens)
         self.calls += 1
-        return self._llm.complete(system, user)
+        return self._llm.complete("", user)
 
     def stats(self) -> str:
         tokens = self._llm.total_input_tokens + self._llm.total_output_tokens

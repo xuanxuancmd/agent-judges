@@ -1,0 +1,6 @@
+{
+  "task_id": "fin-deployment-config-reviewer",
+  "agent": "deployment-config-reviewer",
+  "kind": "blind_final",
+  "prompt_file": "fin-deployment-config-reviewer.md"
+}

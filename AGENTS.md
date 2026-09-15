@@ -14,20 +14,24 @@
   意图匹配靠 judge-manager 的 description，**不引入宿主 skill**。
 - `agent-judges` CLI 是**引擎 + 安装器**，由 judge-manager 通过 shell 调用；
   直接命令行使用仅服务于开发者调试与 CI。
-- 交付物：`integrations/<host>/agent/judge-manager.md` 驱动定义 + `agent-judges install`。
+- 交付物：`integrations/<platform>/agent/judge-manager.md` + `reviewer.md` 驱动定义 + `agent-judges install`。
+- 安装时只装 2 个 Agent：`judge-manager`（对外入口）+ `reviewer`（匿名审查槽位，无 persona）；
+  reviewer 的 persona 由引擎在发出任务时编译进 task prompt，judge-manager 逐字传给匿名 reviewer 执行。
 
 ### 1.2 编排权归属：引擎状态机，禁止宿主 LLM 编排
 
 - 编排（渐进式门控、4 阶段辩论、verdict 合成、解析降级、升级路由）必须留在引擎的
   **prepare/resume 状态机**（确定性代码，spec FR-11）——这是本项目立项根基
   （spec.md 1.1：单 agent 不可靠）。
-- judge-manager 只做机械执行：逐字使用引擎生成的 prompt、原生拉起 reviewer Agent、
+- judge-manager 只做机械执行：逐字使用引擎生成的 prompt（含 reviewer persona）、原生拉起匿名 reviewer Agent、
   原始输出落盘、调用引擎推进、终态汇报。**禁止改写 prompt / 自行增删任务 / 代答门控**。
 
 ### 1.3 LLM 能力宿主化：全部经实体 Agent，零 headless
 
 - 主流场景下全部 LLM 能力（模型/凭证/额度）来自宿主已配置环境：每次 reviewer 调用 =
-  宿主内拉起一个实体 reviewer Agent。用户零模型配置、零 API key。
+  宿主内拉起一个匿名 reviewer Agent。用户零模型配置、零 API key。
+- reviewer 的 persona + 系统固定审查框架由引擎在发出任务时编译进 task prompt（`tasks/<task_id>.md`），
+  judge-manager 逐字传给匿名 reviewer 执行——**安装时不再为每个 reviewer 生成单独的 Agent 文件**。
 - **主路径不得引入宿主专有的 headless CLI 调用**（`claude -p` / `opencode run` 等）——
   各家旗标差异是迁移任意工具的阻碍（NFR-7）。宿主依赖仅限三项公共能力：
   Agent 定义文件 / 原生 subagent 拉起 / shell。
@@ -35,26 +39,29 @@
 
 ### 1.4 reviewer 模型配置：Agent 定义 frontmatter（宿主命名空间）
 
-- `reviewers/*.md` 源与安装生成的宿主 Agent 定义中，`model` 写宿主命名空间：
+- `reviewers/*.md` 源中 `model` 字段写宿主命名空间：
   claude 系仅 Anthropic 模型（`opus`/`sonnet`/完整 ID）；opencode 系为 `provider/model`
   （已配置任意 provider，含自定义网关）。**省略 = 宿主默认模型**。
-- **异构面板**（不同角色不同模型形成对抗）必须保留。已知边界：跨厂商混编需 opencode 宿主。
+- agent 驱动模式下，匿名 reviewer Agent 使用宿主默认模型；reviewer 的 persona 由 task prompt 承载。
+  如需异构面板（不同 reviewer 用不同模型），请用 `--llm litellm` 直连模式（引擎进程内按 reviewer model 字段分别调用）。
 
 ### 1.5 CLI 命名与安装
 
 - 命令全称 **`agent-judges`**（废弃 `aj`，避免短名冲突）。
-- `agent-judges install [--host auto|claude-code|opencode] [--global|--project]`：
-  安装 judge-manager + 全部 reviewer Agent（含 meta-reviewer）；安装产物是**编译产物**，
-  `reviewers/*.md` 与 `integrations/` 是唯一真相，改源后重装生效。
+- `agent-judges install [--platform codeagent|claude-code|opencode|auto] [--project]`：
+  安装 judge-manager + 匿名 reviewer Agent（仅 2 个）；安装产物是**编译产物**，
+  `integrations/<platform>/agent/` 是唯一真相，改模板后重装生效。
+- 默认平台 `codeagent`（claude 兼容机制，目录 `.cac`）；`--host` 为 `--platform` 的向后兼容别名。
 
 ### 1.6 文档同步义务
 
 - 改动 1.1–1.5 相关行为时，同步更新 spec.md（FR-2/3/5/6/10/11、NFR-7）、design.md、
   README。文档与行为不一致视为缺陷。
 
-> **现状标注**（v2 已落地，2026-09-11）：`agent-judges` 命名、`install`、
+> **现状标注**（v2 已落地，2026-09-14）：`agent-judges` 命名、`install --platform`（默认 codeagent/.cac）、
 > prepare/resume 状态机（`run_state.py`/`engine.py`）、reviewers MD 化、
-> judge-manager 驱动定义（`integrations/{claude-code,opencode}/agent/`）
+> 匿名 reviewer Agent 设计（安装只装 judge-manager + reviewer 两个 Agent，persona 编译进 task prompt）、
+> judge-manager 驱动定义（`integrations/{codeagent,claude-code,opencode}/agent/`）
 > 均已实施并有测试覆盖（端到端含早停/thorough+元审查两场景）。
 > 遗留：`debate.py` 直连路径尚未重构为复用 `engine.advance`（双实现并存，
 > 行为一致；重构属技术债）；design.md v2 增补章节未写。

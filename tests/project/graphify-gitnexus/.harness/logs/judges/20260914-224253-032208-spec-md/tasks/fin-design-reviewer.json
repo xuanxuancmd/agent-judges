@@ -1,0 +1,6 @@
+{
+  "task_id": "fin-design-reviewer",
+  "agent": "design-reviewer",
+  "kind": "blind_final",
+  "prompt_file": "fin-design-reviewer.md"
+}

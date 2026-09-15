@@ -1,0 +1,817 @@
+{
+  "run_id": "20260914-230033-169833-plan-md",
+  "content": "# 执行计划：在 graphify 图谱基础上对标 GitNexus 补齐能力\n\n| 字段 | 值 |\n|------|-----|\n| 文档版本 | v1.0 |\n| 创建日期 | 2026-09-14 |\n| 关联规格 | spec.md v1.0 |\n| 状态 | 草案 |\n\n---\n\n## 1. 计划概述\n\n本计划将 spec.md 定义的功能需求拆解为 6 个阶段（P0–P5），按依赖关系串行推进，\n阶段内任务尽量并行。核心路径为：AST 符号增强 → 跨文件解析 → 执行流与增量更新 →\n查询分析工具 → 对标特性补齐 → 性能验证。\n\n每个阶段交付可验证的中间产物，避免到最后才集成。阶段间的依赖关系：\n\n```\nP0 (原型验证) → P1 (符号级图模型) → P2 (增量更新引擎) → P3 (查询与分析)\n                                                          ↓\n                                        P4 (对标特性) → P5 (性能与集成)\n```\n\nP4 依赖 P3 的 MCP 工具框架（框架检测结果需通过 context 工具暴露），但 P4 的 AST\n检测规则开发可与 P3 后半段并行。\n\n---\n\n## 2. P0：原型验证（2 周）\n\n### 2.1 目标\n\n验证跨文件调用解析的技术可行性，以 TypeScript 为试点语言，在 graphify 现有 AST\n提取（Part A）之后增加一个 Resolution 原型阶段。\n\n### 2.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T0.1 | 选定测试仓库：3 个 TypeScript 开源项目（~100–300 文件），覆盖不同框架 | 无 | 测试仓库集合 + 选型记录 |\n| T0.2 | 分析 graphify AST 提取输出的节点/边结构，确定 CALLS 边的接入点 | 无 | AST 输出结构分析文档 |\n| T0.3 | 实现 TypeScript 导入解析器原型：解析 `import { X } from 'path'`、`import Y from 'path'`、`import * as Z from 'path'` | T0.2 | `ts_import_resolver.py` 原型 |\n| T0.4 | 实现 TypeScript 调用解析器原型：沿 AST 调用节点 + 导入表，生成 CALLS 边 | T0.3 | `ts_call_resolver.py` 原型 |\n| T0.5 | 将 Resolution 原型接入 Part A → Part C 合并流程，生成含 CALLS 边的 graph.json | T0.4 | 原型端到端流程 |\n| T0.6 | 验证：对测试仓库手动检查 CALLS 边的准确性，记录误解析/漏解析案例 | T0.5 | 验证报告 |\n\n### 2.3 退出标准\n\n- TypeScript 测试仓库的 CALLS 边准确率（人工抽样）≥ 80%。\n- 导入解析覆盖 named/default/wildcard 三种形式。\n- 原型流程不破坏现有 Part A → Part C 合并逻辑。\n\n---\n\n## 3. P1：符号级图模型（4 周）\n\n### 3.1 目标\n\n将 P0 原型扩展为完整的符号级图模型，实现 FR-1（符号提取增强）和 FR-2（跨文件\n调用与引用边解析），覆盖 6 种语言。\n\n### 3.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T1.1 | 扩展 AST 提取的符号类型：函数、方法、类、接口、类型别名、变量声明、模块 | P0 完成 | 增强后的 `extract()` 输出 |\n| T1.2 | 为符号节点增加限定名（qualified name）字段，支持跨文件符号去重 | T1.1 | 符号节点 schema 更新 |\n| T1.3 | 实现语言解析器注册机制：`LanguageResolver` 接口 + 每语言实现 | T1.1 | `resolver_registry.py` |\n| T1.4 | TypeScript 解析器：导入解析 + 调用解析 + 类继承 + DEFINES 边 | T1.3 | `ts_resolver.py` |\n| T1.5 | JavaScript 解析器：复用 TypeScript 解析器，处理 CommonJS/ESM 差异 | T1.4 | `js_resolver.py` |\n| T1.6 | Python 解析器：`import`/`from...import` 解析 + 调用解析 + 类继承 | T1.3 | `python_resolver.py` |\n| T1.7 | Go 解析器：`import` 解析 + 调用解析 + struct 嵌入（Go 继承机制） | T1.3 | `go_resolver.py` |\n| T1.8 | Java 解析器：`import` 解析 + 调用解析 + extends/implements | T1.3 | `java_resolver.py` |\n| T1.9 | Rust 解析器：`use` 解析 + 调用解析 + trait 实现 | T1.3 | `rust_resolver.py` |\n| T1.10 | 更新 Part C 合并逻辑：合并 AST 节点 + Resolution 边 | T1.4–T1.9 | 增强后的合并流程 |\n| T1.11 | 更新图健康检查（diagnose_extraction）：覆盖 CALLS/IMPORTS/HERITAGE 边的悬空端点检测 | T1.10 | 增强后的诊断 |\n| T1.12 | 新增边类型标注为 EXTRACTED，未解析的调用标注为 AMBIGUOUS | T1.10 | 边来源标注 |\n\n### 3.3 依赖说明\n\n- T1.4–T1.9（6 种语言解析器）可并行开发，共享 T1.3 定义的 `LanguageResolver`\n  接口。\n- T1.10 和 T1.11 依赖全部解析器完成。\n\n### 3.4 交付物\n\n- 6 种语言的符号提取与 Resolution 阶段，集成到 graphify 主流程。\n- 更新后的 `.graph/graph.json` 包含 CALLS/IMPORTS/HERITAGE/DEFINES 边。\n- 图健康检查覆盖新增边类型。\n\n### 3.5 退出标准\n\n- 满足 AC-1（符号提取覆盖）和 AC-2/AC-3（调用边与导入边正确性）。\n- 6 种语言各自的测试仓库通过 Resolution 阶段，无崩溃。\n\n---\n\n## 4. P2：增量更新引擎（3 周）\n\n### 4.1 目标\n\n实现 FR-3（执行流追踪）和 FR-5（git-diff 影响映射），增强增量更新引擎的代码\n分析能力。\n\n### 4.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T2.1 | 设计入口点评分启发式：函数名模式（`main`/`handle`/`test_*`）、框架标记（依赖 P4 但可先用硬编码）、调用入度/出度 | P1 完成 | 入口点评分算法 |\n| T2.2 | 实现调用链追踪：沿 CALLS 边从入口点 BFS，构建 process 节点 | T2.1 | `process_detector.py` |\n| T2.3 | process 节点 schema：入口点符号、调用步骤列表、覆盖符号集合 | T2.2 | process 节点定义 |\n| T2.4 | 集成到 Step 4 构建流程：cluster → process detection → 输出 | T2.3 | 完整构建流程 |\n| T2.5 | 实现 git-diff 解析：文件级 + 行级 diff → 映射到符号节点 | P1 完成 | `diff_parser.py` |\n| T2.6 | 实现影响传播：从变更符号出发，沿 CALLS/HERITAGE 边传播到受影响 process | T2.5, T2.2 | `impact_mapper.py` |\n| T2.7 | 集成到 `--update` 流程：`--update` 触发重新提取后，自动执行影响映射报告 | T2.6 | 增强后的 `--update` |\n| T2.8 | 更新 manifest 机制：manifest 记录符号级哈希（非仅文件级），支持符号粒度增量 | T2.5 | 增强后的 manifest |\n\n### 4.3 交付物\n\n- 执行流追踪能力（process 节点）集成到图谱构建流程。\n- git-diff 影响映射工具，可作为独立命令或 MCP 工具调用。\n- 增强后的 `--update` 流程。\n\n### 4.4 退出标准\n\n- 满足 AC-4（执行流覆盖完整调用链）和 AC-6（git-diff 影响映射正确）。\n- 增量更新后，process 节点正确反映变更后的调用链。\n\n---\n\n## 5. P3：查询与分析能力（4 周）\n\n### 5.1 目标\n\n实现 FR-4（影响分析）、FR-6（MCP 工具扩展）和 FR-7（混合搜索），补齐查询层能力。\n\n### 5.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T3.1 | 实现影响分析核心：给定符号 ID，沿 CALLS 边双向遍历，按深度分组 | P1 完成 | `impact_analyzer.py` |\n| T3.2 | 实现置信度评分：EXTRACTED 边 → 90%、INFERRED 边 → 60%、AMBIGUOUS 边 → 30% | T3.1 | 置信度评分模块 |\n| T3.3 | 实现 trace 工具：两个符号间的最短有向调用路径（BFS on CALLS edges） | P1 完成 | `trace.py` |\n| T3.4 | 实现 context 工具：给定符号，聚合调用者、被调用者、社区归属、参与 process | P2 完成 | `context.py` |\n| T3.5 | 扩展 MCP server：注册 context/impact/trace/detect_changes 工具 | T3.1–T3.4, T2.6 | 增强后的 MCP server |\n| T3.6 | 实现 BM25 倒排索引：索引符号名、限定名、文件路径、文档注释 | P1 完成 | `bm25_index.py` |\n| T3.7 | 实现 RRF 融合：BM25 排名 + 语义向量排名 → RRF（K=60）融合结果 | T3.6 | `hybrid_search.py` |\n| T3.8 | 集成到 query 工具：query 命令优先使用混合搜索，回退到 BFS/DFS | T3.7 | 增强后的 query |\n| T3.9 | 更新嵌入索引：BM25 索引作为独立侧车（`.graph/bm25_index.json`），不膨胀 graph.json | T3.6 | 索引侧车文件 |\n\n### 5.3 交付物\n\n- 影响分析、trace、context 三个分析工具。\n- MCP 工具集扩展至 7 个工具（query/path/explain + context/impact/trace/detect_changes）。\n- BM25 + RRF 混合搜索引擎。\n\n### 5.4 退出标准\n\n- 满足 AC-5（影响分析深度分组）、AC-7（MCP 工具可调用）、AC-8（混合搜索优于纯向量）。\n- 现有 query/path/explain 行为不退化。\n\n---\n\n## 6. P4：GitNexus 对标特性（2 周）\n\n### 6.1 目标\n\n实现 FR-8（框架检测与入口点配置），完善入口点识别能力，使执行流追踪的入口点\n质量接近 GitNexus 水平。\n\n### 6.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T4.1 | 定义框架检测规则 schema：AST 节点模式 → 框架标签 + 入口点权重 | P1 完成 | 规则 schema |\n| T4.2 | 实现框架检测引擎：AST 模式匹配，标记符号节点 | T4.1 | `framework_detector.py` |\n| T4.3 | 编写框架规则集：Express、FastAPI、Spring、React、Gin、Actix | T4.1 | 6 个框架规则文件 |\n| T4.4 | 集成到入口点评分（T2.1）：框架标记作为评分输入信号 | T4.2, P2 完成 | 增强后的入口点评分 |\n| T4.5 | 框架标签通过 context MCP 工具暴露 | T3.5, T4.2 | context 工具增强 |\n| T4.6 | 验证：对使用已知框架的测试仓库，检查入口点识别覆盖率 | T4.4 | 验证报告 |\n\n### 6.3 交付物\n\n- 框架检测引擎 + 6 个框架规则集。\n- 增强后的入口点评分（融合框架信号）。\n- 框架标签在 context 工具中可见。\n\n### 6.4 退出标准\n\n- 6 个框架的测试仓库中，入口点识别覆盖率 ≥ 70%。\n- 框架规则可通过配置文件扩展，无需修改核心代码。\n\n---\n\n## 7. P5：性能与集成（2 周）\n\n### 7.1 目标\n\n验证 NFR-1/2/3（性能、增量更新耗时、存储占用），优化瓶颈，完成文档与示例。\n\n### 7.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T5.1 | 性能基准：对 500/2000/5000 文件仓库执行全量索引，记录各阶段耗时 | P1–P4 完成 | 性能基准报告 |\n| T5.2 | 优化 Resolution 阶段：并行化语言解析器调用，减少串行等待 | T5.1 | 性能优化补丁 |\n| T5.3 | 增量更新基准：对 5000 文件仓库执行单文件变更的 `--update`，记录耗时 | T5.1 | 增量更新基准 |\n| T5.4 | 存储基准：测量 graph.json + BM25 索引 + 嵌入索引的总体积 | T5.1 | 存储报告 |\n| T5.5 | 向后兼容验证：对不含 Resolution 边的旧 graph.json 执行 query，确认无退化 | P3 完成 | 兼容性报告 |\n| T5.6 | 更新 SKILL.md：增加 Resolution 阶段说明、新 MCP 工具文档 | 全部完成 | SKILL.md 更新 |\n| T5.7 | 编写示例：3 个使用场景（影响分析、执行流追踪、变更检测）的端到端示例 | 全部完成 | 示例文档 |\n\n### 7.3 退出标准\n\n- NFR-1：500 文件仓库全量索引 ≤ 60 秒。\n- NFR-3：graph.json 体积增长 ≤ 3 倍。\n- NFR-4：旧 graph.json 的 query 行为无退化。\n- AC-9（向后兼容）通过。\n- AC-10（社区检测语义连贯性）通过人工审查。\n\n---\n\n## 8. 测试与验收策略\n\n### 8.1 测试分层\n\n| 层级 | 范围 | 方法 | 自动化 |\n|------|------|------|--------|\n| 单元测试 | 每个解析器、分析器、索引器的独立逻辑 | pytest + MockLLM（零真实 API） | 全自动 |\n| 集成测试 | AST 提取 → Resolution → 合并 → 构建端到端 | 真实测试仓库样本 | 半自动（CI 触发） |\n| 对标测试 | 与 GitNexus 对同一仓库的输出对比 | 手动执行 GitNexus + 结果对比 | 手动 |\n| 性能测试 | 各阶段耗时与存储占用 | 基准脚本 + 仓库规模矩阵 | 半自动 |\n\n### 8.2 测试仓库\n\n准备 3 组测试仓库样本：\n\n1. **小型仓库**（~50 文件）：单语言，覆盖所有符号类型与边类型，用于单元测试。\n2. **中型仓库**（~500 文件）：多语言混合，含框架使用，用于集成测试与性能基准。\n3. **大型仓库**（~5000 文件）：真实开源项目，用于性能验证与对标测试。\n\n### 8.3 验收标准映射\n\n| 验收标准 | 验证阶段 | 验证方法 |\n|----------|----------|----------|\n| AC-1 符号提取覆盖 | P1 | 单元测试：每种语言的固定样本仓库 |\n| AC-2 调用边正确 | P1 | 集成测试：已知调用关系的断言 |\n| AC-3 导入边正确 | P1 | 单元测试：named/default/wildcard import 测试样本 |\n| AC-4 执行流覆盖 | P2 | 集成测试：入口点到终端调用的路径断言 |\n| AC-5 影响分析深度 | P3 | 单元测试：已知依赖结构的深度分组断言 |\n| AC-6 git-diff 映射 | P2 | 集成测试：模拟 diff → 受影响符号断言 |\n| AC-7 MCP 工具调用 | P3 | 集成测试：MCP 客户端调用 + 响应格式断言 |\n| AC-8 混合搜索召回 | P3 | 对标测试：同一查询的召回率对比 |\n| AC-9 向后兼容 | P5 | 集成测试：旧 graph.json query 无退化 |\n| AC-10 社区检测连贯性 | P5 | 人工审查：社区划分与功能模块对比 |\n\n### 8.4 持续集成\n\n- 所有单元测试在 CI 中每次提交自动执行。\n- 集成测试在 PR 合并前执行。\n- 性能基准在里程碑完成时执行，记录趋势。\n\n---\n\n## 9. 风险与应对\n\n| 风险 | 影响 | 概率 | 应对 |\n|------|------|------|------|\n| 跨文件解析的语言复杂度超预期 | P1 延期 | 中 | P0 原型阶段提前暴露难点；按语言优先级降序实现（TS > Python > Go > Java > Rust > JS） |\n| 增量更新后图谱出现悬空边 | 数据完整性 | 中 | 图健康检查（T1.11）覆盖新增边类型；`--update` 完成后自动执行诊断并报告 |\n| graph.json 体积膨胀超 NFR-3 限制 | 存储压力 | 低 | BM25 索引独立侧车；Resolution 边按需存储（仅 EXTRACTED 边入主图，AMBIGUOUS 边入侧车） |\n| MCP 工具响应延迟影响 agent 体验 | 用户体验 | 中 | 影响分析结果缓存；深度限制（默认最大深度 5 层，可配置） |\n| 框架检测规则误报 | 入口点评分失准 | 低 | 规则可配置；误报案例在验证阶段收集并修正 |\n| 旧 graph.json 升级路径不清晰 | 向后兼容 | 低 | NFR-4 保证旧图 query 不退化；新功能在无 Resolution 边时静默降级 |\n\n---\n\n## 10. 依赖与前提\n\n| 依赖项 | 说明 | 状态 |\n|--------|------|------|\n| graphify 现有 AST 提取（Part A） | Resolution 阶段在其输出基础上工作 | 已就绪 |\n| graphify 现有社区检测（cluster） | process detection 需要社区信息作为评分输入 | 已就绪 |\n| graphify 现有 MCP server（--mcp） | 新工具注册到现有 server | 已就绪 |\n| graphify 现有嵌入索引（build_embeddings） | 混合搜索复用现有向量索引 | 已就绪 |\n| NetworkX 图结构 | Resolution 边直接添加到现有 NetworkX 图 | 已就绪 |\n| Tree-sitter Python 绑定 | 如需替换现有 AST 提取为 Tree-sitter（待 P0 评估） | 待确认 |\n\n---\n\n## 附录：阶段与 FR 映射\n\n| 阶段 | 覆盖 FR | 覆盖 NFR | 覆盖 AC |\n|------|---------|----------|---------|\n| P0 | — | — | 原型验证（无正式 AC） |\n| P1 | FR-1, FR-2 | NFR-4, NFR-5, NFR-6 | AC-1, AC-2, AC-3 |\n| P2 | FR-3, FR-5 | NFR-2 | AC-4, AC-6 |\n| P3 | FR-4, FR-6, FR-7 | — | AC-5, AC-7, AC-8 |\n| P4 | FR-8 | — | — |\n| P5 | — | NFR-1, NFR-2, NFR-3 | AC-9, AC-10 |\n",
+  "context": null,
+  "filename": "plan.md",
+  "panel": [
+    "spec-reviewer",
+    "deployment-config-reviewer",
+    "design-reviewer"
+  ],
+  "all_reviewers": [
+    "my-security-auditor",
+    "dangerous-operation-scanner",
+    "deception-detector",
+    "deployment-config-reviewer",
+    "design-reviewer",
+    "documentation-reviewer",
+    "external-code-review-auditor",
+    "implementation-vs-requirement-reviewer",
+    "integration-test-reviewer",
+    "process-compliance-reviewer",
+    "requirement-acceptance-reviewer",
+    "requirement-clarification-reviewer",
+    "requirement-decomposition-reviewer",
+    "requirement-elicitation-reviewer",
+    "requirement-prioritization-reviewer",
+    "spec-reviewer",
+    "test-plan-reviewer",
+    "unit-test-reviewer"
+  ],
+  "token_count": 6121,
+  "content_type": "spec",
+  "threshold": 0.8,
+  "gated": true,
+  "max_tier": "thorough",
+  "majority_votes": {
+    "spec-reviewer": 1,
+    "deployment-config-reviewer": 1,
+    "design-reviewer": 1
+  },
+  "tier": "thorough",
+  "planned_debate_rounds": 2,
+  "planned_review_depth": 1,
+  "stage": "done",
+  "start_panel": 1,
+  "rounds_done": 2,
+  "meta_depth_done": 1,
+  "individual": {
+    "spec-reviewer": {
+      "severity": "major",
+      "confidence": 0.82,
+      "reasoning": "作为 spec-reviewer，逐条审查了 plan.md 的可追溯性、接口契约完整性、边界条件覆盖、验收标准可测试性与内部一致性。计划整体结构清晰，FR/NFR/AC 映射表存在，任务依赖关系明确。但发现 3 处 major 级内部不一致（NFR 映射矛盾、INFERRED 边类型未定义却被引用、AMBIGUOUS 边侧车存储策略无实现任务）以及多处 minor 级缺口（接口契约未定义、边界条件未系统覆盖、AC-4/AC-8 缺乏量化阈值、FR-8 无对应正式 AC、Tree-sitter 评估无归属任务、NFR 覆盖声明与退出标准脱节）。这些不一致会导致执行阶段对验收范围与接口定义产生歧义，需修正后方可作为可执行规格基线。",
+      "findings": [
+        {
+          "description": "P5 阶段 NFR 映射三方不一致：目标声明 NFR-1/2/3，退出标准引用 NFR-1/3/4，附录映射 NFR-1/2/3。NFR-2 出现在目标与附录但缺失于退出标准；NFR-4 出现在退出标准但附录将其映射到 P1。这会导致 P5 验收时无法确定 NFR-2 是否需要验证、NFR-4 是否属于 P5 验收范围。",
+          "severity": "major",
+          "confidence": 0.9,
+          "evidence": "Section 7.1: 「验证 NFR-1/2/3（性能、增量更新耗时、存储占用）」；Section 7.3: 「NFR-1：500 文件仓库全量索引 ≤ 60 秒。NFR-3：graph.json 体积增长 ≤ 3 倍。NFR-4：旧 graph.json 的 query 行为无退化。」；附录: 「P5 | — | NFR-1, NFR-2, NFR-3 | AC-9, AC-10」。三处对 P5 覆盖的 NFR 集合不一致。",
+          "suggestion": "统一 P5 的 NFR 覆盖声明。明确 NFR-2（增量更新耗时）的验证属于 P5，将退出标准补入 NFR-2 的量化阈值；将 NFR-4 从 P5 退出标准移除或在附录中补标 P5 也覆盖 NFR-4。三处必须指向同一 NFR 子集。"
+        },
+        {
+          "description": "T3.2 置信度评分引用 INFERRED 边类型（60%），但全计划中 INFERRED 边从未被任何任务定义或创建。T1.12 仅定义两种边状态：EXTRACTED 与 AMBIGUOUS。这导致 T3.2 的三级置信度模型中中间档（60%）对应的数据源不存在，影响影响分析（FR-4）的置信度计算逻辑完整性。",
+          "severity": "major",
+          "confidence": 0.88,
+          "evidence": "T3.2: 「实现置信度评分：EXTRACTED 边 → 90%、INFERRED 边 → 60%、AMBIGUOUS 边 → 30%」；T1.12: 「新增边类型标注为 EXTRACTED，未解析的调用标注为 AMBIGUOUS」——仅定义两种状态，无任何任务产生 INFERRED 边。",
+          "suggestion": "要么在 P1 增加任务定义 INFERRED 边的生成条件，要么将 T3.2 置信度模型改为两级（EXTRACTED 90% / AMBIGUOUS 30%），消除未定义的中间档。"
+        },
+        {
+          "description": "风险表中提出 AMBIGUOUS 边存储到侧车文件以控制 graph.json 体积（NFR-3 风险应对），但没有任何任务实现此存储策略。T1.12 仅标注边来源类型，不涉及分离存储。这意味着该风险缓解措施无归属任务，风险实际未被应对。",
+          "severity": "major",
+          "confidence": 0.75,
+          "evidence": "Section 9 风险表: 「graph.json 体积膨胀超 NFR-3 限制 | … | BM25 索引独立侧车；Resolution 边按需存储（仅 EXTRACTED 边入主图，AMBIGUOUS 边入侧车）」；T1.12: 「新增边类型标注为 EXTRACTED，未解析的调用标注为 AMBIGUOUS」——仅涉及标注，无分离存储逻辑；全阶段任务列表中无任何任务实现 AMBIGUOUS 边侧车存储。",
+          "suggestion": "在 P1 或 P5 增加明确任务：实现 AMBIGUOUS 边从主图分离到侧车文件的存储逻辑，并在 Part C 合并流程中集成。或者从风险应对中移除此策略，改为其他体积控制手段。"
+        },
+        {
+          "description": "FR-8（框架检测与入口点配置）在附录中映射到 P4，但 AC-1 至 AC-10 中无一对应框架检测质量。P4 退出标准「入口点识别覆盖率 ≥ 70%」是事实上的验收标准，但未形式化进入 AC 列表，导致 FR-8 缺乏可追溯的正式验收标准。",
+          "severity": "minor",
+          "confidence": 0.8,
+          "evidence": "附录: 「P4 | FR-8 | — | —」——覆盖 AC 列为空；P4.4 退出标准: 「6 个框架的测试仓库中，入口点识别覆盖率 ≥ 70%」；Section 8.3 AC 列表无框架检测相关条目。",
+          "suggestion": "新增 AC-11（框架检测覆盖率 ≥ 70%），在附录 P4 行补入 AC-11。"
+        },
+        {
+          "description": "AC-8「混合搜索优于纯向量」缺乏量化阈值定义。Section 8.3 提到「召回率对比」但未定义「优于」的判定标准，使 AC-8 在对标测试中无法给出确定性 pass/fail 判定。",
+          "severity": "minor",
+          "confidence": 0.82,
+          "evidence": "P5.4: 「AC-8（混合搜索优于纯向量）」——无量化阈值；Section 8.3: 「AC-8 混合搜索召回 | P3 | 对标测试：同一查询的召回率对比」——仅说「对比」，未定义通过门槛。",
+          "suggestion": "将 AC-8 改为「混合搜索在相同查询集上召回率较纯向量搜索提升 ≥ 10%」，明确测试查询集规模与判定方法。"
+        },
+        {
+          "description": "AC-4「执行流覆盖完整调用链」中「完整」未量化定义。是 100% 覆盖入口点到终端的所有调用路径？还是覆盖率达到某阈值？",
+          "severity": "minor",
+          "confidence": 0.78,
+          "evidence": "P2.4: 「满足 AC-4（执行流覆盖完整调用链）」；Section 8.3: 「AC-4 执行流覆盖 | P2 | 集成测试：入口点到终端调用的路径断言」——「路径断言」未定义覆盖率门槛。",
+          "suggestion": "将 AC-4 量化为「对测试仓库中已知入口点，process 节点覆盖的调用链深度达到实际调用链的 ≥ 90%」。"
+        },
+        {
+          "description": "计划引入新接口 LanguageResolver（T1.3）和 4 个新 MCP 工具（T3.5: context/impact/trace/detect_changes），但均未定义接口契约（方法签名、输入/输出 schema、错误码、边界返回）。计划引用 spec.md v1.0 但未指明这些接口在 spec.md 中的对应条目。",
+          "severity": "minor",
+          "confidence": 0.72,
+          "evidence": "T1.3: 「实现语言解析器注册机制：LanguageResolver 接口 + 每语言实现」——无方法签名定义；T3.5: 「扩展 MCP server：注册 context/impact/trace/detect_changes 工具」——无输入/输出 schema；文档头: 「关联规格 | spec.md v1.0」——但未在任何任务中指明对应 spec 条目编号。",
+          "suggestion": "在计划中为每个新接口补充契约摘要，并标注对应的 spec.md 条目编号。"
+        },
+        {
+          "description": "边界条件未在任务描述中系统覆盖。导入解析（T0.3）仅提及 named/default/wildcard，未覆盖循环导入、动态导入（import()）、re-export、路径别名；git-diff 解析（T2.5）未提及二进制文件、文件删除、文件重命名；影响分析深度限制（默认最大深度 5 层）仅在风险表中提及，未写入 T3.1/T3.3 任务描述。",
+          "severity": "minor",
+          "confidence": 0.75,
+          "evidence": "T0.3: 仅「解析 import { X } from 'path'、import Y from 'path'、import * as Z from 'path'」——三种形式，无边界情况；T2.5: 「文件级 + 行级 diff → 映射到符号节点」——无二进制/删除/重命名处理说明；Section 9: 「深度限制（默认最大深度 5 层，可配置）」——仅在风险应对中，T3.1 与 T3.3 任务描述未提及。",
+          "suggestion": "在 T0.3/T1.4-T1.9 各解析器任务描述中显式列出需处理的边界情况；在 T2.5 补充二进制文件跳过、删除/重命名符号清理逻辑；在 T3.1/T3.3 任务描述中纳入深度限制参数。"
+        },
+        {
+          "description": "附录声明 P1 覆盖 NFR-4/5/6、P2 覆盖 NFR-2，但这两个阶段的退出标准仅引用 AC，未包含任何 NFR 验证条目。这意味着声称覆盖的 NFR 在阶段退出时无验证门槛。",
+          "severity": "minor",
+          "confidence": 0.7,
+          "evidence": "附录: 「P1 | FR-1, FR-2 | NFR-4, NFR-5, NFR-6 | AC-1, AC-2, AC-3」——声明覆盖 3 个 NFR；P1 退出标准: 「满足 AC-1…和 AC-2/AC-3…」「6 种语言各自的测试仓库通过 Resolution 阶段，无崩溃」——无 NFR-4/5/6 验证条目。附录: 「P2 | FR-3, FR-5 | NFR-2 | AC-4, AC-6」；P2 退出标准: 「满足 AC-4…和 AC-6…」——无 NFR-2 验证条目。",
+          "suggestion": "在每个声明覆盖 NFR 的阶段退出标准中补充对应 NFR 的量化验证条目。"
+        },
+        {
+          "description": "Section 10 列出依赖项「Tree-sitter Python 绑定 | 如需替换现有 AST 提取为 Tree-sitter（待 P0 评估）| 待确认」，但 P0 任务分解（T0.1–T0.6）中无任何任务明确执行 Tree-sitter 替换评估。依赖状态无法在 P0 结束时更新。",
+          "severity": "minor",
+          "confidence": 0.68,
+          "evidence": "Section 10: 「Tree-sitter Python 绑定 | 如需替换现有 AST 提取为 Tree-sitter（待 P0 评估）| 待确认」；P0 任务表 T0.1–T0.6: T0.2「分析 graphify AST 提取输出的节点/边结构」——分析现有输出，不评估 Tree-sitter；无 T0.x 任务提及 Tree-sitter。",
+          "suggestion": "在 P0 增加 T0.7（或扩展 T0.2）：评估是否需要引入 Tree-sitter，输出评估结论，更新 Section 10 依赖状态。"
+        }
+      ],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": null
+    },
+    "deployment-config-reviewer": {
+      "severity": "minor",
+      "confidence": 0.72,
+      "reasoning": "被审查内容为 graphify 增强项目的 6 阶段执行计划（plan.md），从 DevOps/平台工程视角审查其部署配置一致性、安全基线、可运维性与可复现性。内容本身不含 Dockerfile/K8s/Terraform 等部署配置文件，因此审查聚焦于：(1) 计划中与 CI/依赖/配置管理相关的实际声明；(2) NFR 与 FR 映射的一致性（配置漂移检查）；(3) 可运维性要素在计划中的覆盖情况。共发现 5 条 minor 级问题：CI 配置缺乏具体性、显式硬编码无清理追踪、依赖无版本锁定、NFR 映射交叉不一致、MCP 服务缺乏运维配置。无 critical 或 major 级问题。",
+      "findings": [
+        {
+          "description": "CI 配置仅以文字描述三条实践，未指定 CI 工具、流水线定义文件或触发条件，无法直接落地为可执行配置",
+          "severity": "minor",
+          "confidence": 0.85,
+          "evidence": "第 292-296 行（8.4 持续集成）：'所有单元测试在 CI 中每次提交自动执行。集成测试在 PR 合并前执行。性能基准在里程碑完成时执行，记录趋势。' —— 未提及具体 CI 平台，未提供 pipeline 定义文件。",
+          "suggestion": "在 P5 集成阶段或更早，指定 CI 工具并提供 pipeline 定义文件，包含：单元测试 job、集成测试 job、性能基准 job，并定义依赖缓存与构建产物归档策略。"
+        },
+        {
+          "description": "T2.1 明确提及'先用硬编码'作为框架标记的临时实现，但后续无显式任务追踪硬编码值的清理与替换",
+          "severity": "minor",
+          "confidence": 0.7,
+          "evidence": "第 144 行（T2.1）：'设计入口点评分启发式：函数名模式（main/handle/test_*）、框架标记（依赖 P4 但可先用硬编码）' —— T4.4 暗示 T4.2 产出的框架检测将替代硬编码，但无显式任务声明'移除 T2.1 中的硬编码值'。",
+          "suggestion": "在 P4 任务分解中新增显式任务：'移除 T2.1 中的硬编码框架标记，入口点评分改为读取 T4.2 框架检测引擎的输出'，并在 P4 退出标准中加入'无硬编码框架标记残留'的验证点。"
+        },
+        {
+          "description": "外部依赖（NetworkX、Tree-sitter）未声明版本锁定策略，影响构建可复现性",
+          "severity": "minor",
+          "confidence": 0.75,
+          "evidence": "第 315-322 行（第 10 节 依赖与前提）：列出 'NetworkX 图结构'（状态：已就绪）和 'Tree-sitter Python 绑定'（状态：待确认），但均未声明具体版本或版本范围，也无依赖锁定文件的交付任务。",
+          "suggestion": "在 P0 或 P1 阶段增加依赖版本锁定任务：确定最低支持版本，维护锁定文件，并在 CI 中验证锁定文件与声明一致。"
+        },
+        {
+          "description": "NFR 映射存在交叉覆盖且退出标准与附录映射不一致，构成需求追踪层面的配置漂移",
+          "severity": "minor",
+          "confidence": 0.8,
+          "evidence": "附录将 NFR-2 分别映射到 P2 和 P5 两行。NFR-4 在附录中映射到 P1，但在 P5 退出标准中也作为验证项出现，而 P5 附录行未列出 NFR-4。这导致 NFR-4 的归属阶段不一致。",
+          "suggestion": "统一 NFR 映射：注明'实现/P2，验证/P5'而非简单重复行；将 NFR-4 加入 P5 附录行或注明交叉验证关系。"
+        },
+        {
+          "description": "MCP server 扩展（T3.5 新增 4 个工具）未提及健康检查、资源限制或优雅停机等可运维性配置",
+          "severity": "minor",
+          "confidence": 0.6,
+          "evidence": "第 180 行（T3.5）：'扩展 MCP server：注册 context/impact/trace/detect_changes 工具'，第 307 行（风险表）：提及了查询深度限制，但未涉及 MCP server 的健康检查端点、内存/CPU 资源限制、请求超时、优雅停机或日志输出策略。",
+          "suggestion": "在 P3 或 P5 中增加 MCP server 运维配置任务：定义健康检查端点、请求超时与并发限制、日志输出格式、优雅停机处理。"
+        }
+      ],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": null
+    },
+    "design-reviewer": {
+      "severity": "major",
+      "confidence": 0.78,
+      "reasoning": "该执行计划在结构化分解、依赖管理、风险应对和验收映射方面总体扎实——6 个阶段拆解清晰，任务依赖关系基本自洽，风险表提供了消解方案而非仅列出风险，AC-1 到 AC-10 均有验证映射。但作为设计文档，存在若干显著缺陷：(1) NFR-5/NFR-6 在附录中被声明由 P1 覆盖，但全文从未定义这两个需求是什么，P1 退出标准（3.5）也不包含对它们的验证；(2) NFR-2（增量更新耗时）在 P2 和 P5 均被声明覆盖，但两个阶段的退出标准均未给出通过阈值，T5.3 仅记录耗时而无判定标准；(3) 多项关键技术选型（BM25、RRF K=60、BFS 遍历、语言优先级排序、Tree-sitter 取舍）直接给出结论而无比对依据，违反 persona 第 3 维度要求；(4) 多个关键失败模式未设计：BFS 调用链追踪的环检测、动态导入/路径别名解析、语言解析器对语法错误源码的容错、入口点检测零结果时的降级路径。这些问题虽不使计划不可执行，但在实现阶段会造成返工或行为不确定，应在执行前补齐。",
+      "findings": [
+        {
+          "description": "NFR-5 和 NFR-6 在附录阶段映射中被声明由 P1 覆盖，但全文从未定义这两个非功能性需求的具体内容，P1 的退出标准（3.5）仅提及 AC-1/AC-2/AC-3，不包含对 NFR-5/NFR-6 的任何验证条件。需求覆盖存在盲区。",
+          "severity": "major",
+          "confidence": 0.82,
+          "evidence": "附录（第328-334行）：P1 行标注覆盖 'NFR-4, NFR-5, NFR-6'。但 P1 退出标准（第126-128行）仅写 '满足 AC-1（符号提取覆盖）和 AC-2/AC-3（调用边与导入边正确性）'，无 NFR-5/NFR-6 的验收条款。全文未出现 NFR-5/NFR-6 的定义或描述。",
+          "suggestion": "在 P1 退出标准中补充 NFR-5 和 NFR-6 的具体验收条件；若这两个 NFR 在 spec.md 中有定义，应在计划中至少引用其内容摘要，使退出标准可独立验证。"
+        },
+        {
+          "description": "NFR-2（增量更新耗时）在附录中由 P2 和 P5 共同覆盖，但 P2 退出标准（4.4）仅提及 AC-4 和 AC-6，P5 退出标准（7.3）仅给出 NFR-1/NFR-3/NFR-4 的阈值，NFR-2 无任何通过/失败阈值。T5.3 仅记录耗时数据，无判定标准。",
+          "severity": "major",
+          "confidence": 0.8,
+          "evidence": "附录 P2 标注覆盖 NFR-2；附录 P5 标注覆盖 NFR-1, NFR-2, NFR-3。但 P2 退出标准无 NFR-2 阈值。P5 退出标准列出 NFR-1/NFR-3/NFR-4 的阈值，唯独缺 NFR-2 的量化标准。T5.3 描述为 '记录耗时'，无阈值。",
+          "suggestion": "在 P5 退出标准中补充 NFR-2 的通过阈值（如 '单文件变更 --update 耗时 ≤ X 秒'），并在 T5.3 中加入阈值断言而非仅记录。"
+        },
+        {
+          "description": "多项关键技术选型直接给出结论而无比对依据：BM25 被选为倒排索引算法未与 TF-IDF 等替代方案对比；RRF 融合参数 K=60 未说明该值来源或适用性；BFS 被选为调用链追踪算法未与 DFS 对比；语言实现优先级排序未给出依据；Tree-sitter 取舍标注'待 P0 评估'但 P0 无对应评估任务。",
+          "severity": "major",
+          "confidence": 0.75,
+          "evidence": "T3.6：'实现 BM25 倒排索引'——直接结论。T3.7：'RRF（K=60）融合'——K=60 无来源说明。T2.2：'沿 CALLS 边从入口点 BFS'——无 DFS 对比。风险表：'按语言优先级降序实现（TS > Python > Go > Java > Rust > JS）'——排序依据缺失。依赖表：'Tree-sitter Python 绑定…待 P0 评估'，但 P0 任务表无 Tree-sitter 评估任务。",
+          "suggestion": "对 BM25/RRF 补充选型理由；对 BFS vs DFS 补充适用性分析；补充语言优先级排序依据；在 P0 中增加明确的 Tree-sitter 评估任务。"
+        },
+        {
+          "description": "关键失败模式未设计：(1) BFS 调用链追踪和最短路径无环检测机制——函数 A→B→A 的循环调用会导致无限循环；(2) 6 种语言解析器未覆盖动态导入和路径别名解析；(3) 语言解析器对语法错误源码的容错策略未设计；(4) 入口点评分零结果时的降级行为未定义。",
+          "severity": "major",
+          "confidence": 0.8,
+          "evidence": "T2.2：'沿 CALLS 边从入口点 BFS，构建 process 节点'——无环检测描述。T1.4：TypeScript 解析器仅提及 '导入解析 + 调用解析 + 类继承 + DEFINES 边'，无动态导入处理。T2.1：'入口点评分启发式'——无零结果降级。风险表未包含以上失败模式。",
+          "suggestion": "在 T2.2/T3.3 中增加访问集防止环；在语言解析器任务中增加动态导入/路径别名的处理说明或显式标注为'不支持的已知限制'；增加解析失败容错策略；在 T2.1 中定义零入口点时的 fallback 行为。"
+        },
+        {
+          "description": "T3.5 注册 'detect_changes' MCP 工具，但计划中无明确的实现任务对应此工具——T2.6 实现了 impact_mapper，T2.7 将其集成到 --update 流程，但 detect_changes 作为 MCP 工具的接口定义未在任何任务中设计。",
+          "severity": "minor",
+          "confidence": 0.7,
+          "evidence": "T3.5：'扩展 MCP server：注册 context/impact/trace/detect_changes 工具'。T2.6 实现 impact_mapper，T2.7 集成到 --update。但无任务描述 detect_changes 工具的 MCP 接口设计（如是否接受 git diff 输入、输出格式）。",
+          "suggestion": "增加一个任务明确定义 detect_changes MCP 工具的输入/输出接口，或将其实现明确归并到 T2.6/T2.7 的交付物描述中。"
+        },
+        {
+          "description": "依赖图显示 P3→P4 严格串行，但文字说明声明 'P4 的 AST 检测规则开发可与 P3 后半段并行'。图与文字不一致，可能误导排期。",
+          "severity": "minor",
+          "confidence": 0.72,
+          "evidence": "依赖图（第52-56行）：'P0 → P1 → P2 → P3' 然后 'P4 (对标特性) → P5 (性能与集成)'，P3 和 P4 之间无并行标注。第58-59行：'P4 依赖 P3 的 MCP 工具框架…但 P4 的 AST 检测规则开发可与 P3 后半段并行。'",
+          "suggestion": "更新依赖图以反映 P4 与 P3 后半段的并行关系，或将文字说明改为与图一致。"
+        },
+        {
+          "description": "AC-10（社区检测语义连贯性）的验证方法为'人工审查'，无任何量化标准或判定规则，验证结果不可复现，无法被其他审查者或 CI 机制复核。",
+          "severity": "minor",
+          "confidence": 0.68,
+          "evidence": "第289行：'AC-10 社区检测连贯性 | P5 | 人工审查：社区划分与功能模块对比'。P5 退出标准：'AC-10（社区检测语义连贯性）通过人工审查。'",
+          "suggestion": "为 AC-10 补充半量化标准，如'抽样 N 个社区，其中 ≥ M% 的社区能对应到已知功能模块'，或定义专家评审协议。"
+        }
+      ],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": null
+    }
+  },
+  "debate_rounds": [
+    {
+      "positions": [
+        "[spec-reviewer 辩论 - plan.md]\n\n从规格审查视角，plan.md 存在 3 个 major 级问题：NFR-5/NFR-6 未定义、AC 缺乏量化阈值、MCP 工具接口契约不完整。与 design-reviewer 的核心发现高度重合并互相印证。\n\n```json\n{\n  \"satisfied\": false,\n  \"findings\": [\n    {\n      \"id\": \"SR-1\",\n      \"severity\": \"major\",\n      \"confidence\": 0.9,\n      \"category\": \"traceability\",\n      \"title\": \"NFR-5/NFR-6 被附录映射到 P1 但全文未定义\",\n      \"evidence\": \"附录声明 P1 覆盖 NFR-4/NFR-5/NFR-6，但 plan.md 全文从未说明 NFR-5/NFR-6 的具体内容。P1 退出标准仅提及 AC-1/AC-2/AC-3，不包含对 NFR-5/NFR-6 的验证。\",\n      \"suggestion\": \"在计划中内联 NFR-5/NFR-6 的定义摘要，并在 P1 退出标准中增加对应验证条件。\"\n    },\n    {\n      \"id\": \"SR-2\",\n      \"severity\": \"major\",\n      \"confidence\": 0.85,\n      \"category\": \"testability\",\n      \"title\": \"多项验收标准缺乏量化通过阈值\",\n      \"evidence\": \"AC-4 '完整调用链'未定义判定标准；AC-8 '混合搜索优于纯向量'未定义优势幅度；AC-10 '语义连贯性'仅用'人工审查'无评分细则。\",\n      \"suggestion\": \"为每个 AC 定义明确的通过阈值：AC-4 覆盖率≥90%；AC-8 召回率提升≥X%；AC-10 评分细则。\"\n    },\n    {\n      \"id\": \"SR-3\",\n      \"severity\": \"major\",\n      \"confidence\": 0.8,\n      \"category\": \"interface-contract\",\n      \"title\": \"新增 MCP 工具接口契约不完整\",\n      \"evidence\": \"T3.5 注册 context/impact/trace/detect_changes 四个工具，但未定义输入参数 schema、输出格式、错误码。AC-7 仅验证'可调用'，不覆盖接口契约完整性。\",\n      \"suggestion\": \"为每个 MCP 工具定义输入/输出 JSON schema 和错误码。\"\n    },\n    {\n      \"id\": \"SR-4\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.75,\n      \"title\": \"NFR-2 在 P2 和 P5 双重映射且无通过阈值\",\n      \"evidence\": \"附录将 NFR-2 映射到 P2 和 P5，但两个阶段的退出标准均未给出增量更新耗时的通过阈值。T5.3 仅'记录耗时'无判定标准。\",\n      \"suggestion\": \"明确 NFR-2 的主要验证阶段，在退出标准中定义通过阈值。\"\n    },\n    {\n      \"id\": \"SR-5\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.7,\n      \"title\": \"T2.1 对 P4 的前向引用与阶段依赖声明不一致\",\n      \"evidence\": \"T2.1 '依赖 P4 但可先用硬编码'，T4.4 '依赖 P2 完成'，形成潜在循环引用，与串行依赖图矛盾。\",\n      \"suggestion\": \"明确 T2.1 的 P4 依赖是软依赖还是硬依赖。\"\n    },\n    {\n      \"id\": \"SR-6\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.65,\n      \"title\": \"LanguageResolver 接口未定义方法签名\",\n      \"evidence\": \"T1.3 声明实现 LanguageResolver 接口，但接口的方法签名、输入/输出类型未定义。\",\n      \"suggestion\": \"在 T1.3 交付物中明确 LanguageResolver 接口定义。\"\n    }\n  ],\n  \"summary\": \"从规格审查视角，plan.md 存在 3 个 major 级问题：NFR-5/NFR-6 未定义、AC 缺乏量化阈值、MCP 工具接口契约不完整。与 design-reviewer 的核心发现高度重合并互相印证。建议在进入实现阶段前补齐 NFR 定义、AC 阈值和接口契约。\"\n}\n```\n",
+        "[deployment-config-reviewer 辩论 - plan.md]\n\n从 DevOps/平台工程视角，计划在功能分解上结构清晰，但 CI 配置空壳化、依赖锁定策略缺失、性能基准环境未定义。这些缺口使得 NFR-1 和 NFR-2 的验收标准不可验证。\n\n```json\n{\n  \"satisfied\": false,\n  \"findings\": [\n    {\n      \"id\": \"DC-1\",\n      \"severity\": \"major\",\n      \"confidence\": 0.8,\n      \"title\": \"CI 流水线配置空壳化（8.4 节仅含意图声明，无实现定义）\",\n      \"evidence\": \"8.4 持续集成节仅列出三条意图性陈述，但未定义 CI 平台、job 结构、缓存策略、或如何为 6 种语言解析器配置测试矩阵与环境供给。\",\n      \"suggestion\": \"增加 CI 配置任务：选定 CI 平台、设计多语言测试矩阵、定义依赖缓存策略。\"\n    },\n    {\n      \"id\": \"DC-2\",\n      \"severity\": \"major\",\n      \"confidence\": 0.75,\n      \"title\": \"依赖锁定策略缺失，构建不可复现\",\n      \"evidence\": \"计划新增多个 Python 模块，但全文未提及 requirements.txt 锁定、pyproject.toml lock 文件等依赖版本管理策略。Tree-sitter 绑定状态'待确认'加剧依赖不确定性。\",\n      \"suggestion\": \"增加依赖管理任务：采用 uv/pip-tools 生成锁定文件，CI 中验证可复现安装。\"\n    },\n    {\n      \"id\": \"DC-3\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.7,\n      \"title\": \"性能基准环境规格未定义，结果不可复现\",\n      \"evidence\": \"T5.1 声明对 500/2000/5000 文件仓库执行全量索引记录耗时，但未指定硬件配置、操作系统、Python 版本或环境隔离方式。\",\n      \"suggestion\": \"在 T5.1 中增加环境规格定义，采用固定基准环境保证可复现性。\"\n    },\n    {\n      \"id\": \"DC-4\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.65,\n      \"title\": \"测试仓库版本固定策略未定义\",\n      \"evidence\": \"8.2 定义 3 组测试仓库，但未说明是否固定到特定 commit、以何种方式获取，如何保证不同开发者与 CI 环境使用相同测试样本。\",\n      \"suggestion\": \"定义测试仓库管理策略：固定 commit SHA、使用 git submodule。\"\n    },\n    {\n      \"id\": \"DC-5\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.6,\n      \"title\": \"MCP server 部署/分发方案缺失\",\n      \"evidence\": \"T3.5 扩展 MCP server 但计划无任何任务涉及打包与分发配置。风险表提到 MCP 延迟但应对措施仅为缓存与深度限制，未涉及部署层面资源配额。\",\n      \"suggestion\": \"在 P5 增加任务：定义 MCP server 部署配置。\"\n    }\n  ],\n  \"summary\": \"计划在功能分解与依赖管理上结构清晰，但从 DevOps 视角存在显著缺口：CI 配置空壳化、依赖锁定策略完全缺失、性能基准环境未定义。建议在执行前补齐 CI pipeline 定义、依赖锁定、基准环境规格。\"\n}\n```\n",
+        "[design-reviewer 辩论 - plan.md]\n\n从设计架构视角，计划结构清晰但存在 3 项 major 级缺陷：技术选型缺乏对比依据、调用环检测与动态分发边界设计缺失、Tree-sitter 关键依赖待确认但 P0 无评估任务。挑战 spec-reviewer 的 INFERRED 边 over-judgment（INFERRED 在 spec.md 中有定义）和 deployment-config-reviewer 的 CI 配置 over-judgment（计划文档不应指定 CI 工具链）。\n\n```json\n{\n  \"satisfied\": false,\n  \"findings\": [\n    {\n      \"id\": \"DR-1\",\n      \"severity\": \"major\",\n      \"confidence\": 0.85,\n      \"title\": \"技术选型缺乏对比依据——BM25+RRF、置信度评分、入口点启发式均直接给出结论\",\n      \"evidence\": \"T3.6/T3.7 选定 BM25+RRF(K=60) 但未提供与 TF-IDF 等替代方案的对比；T3.2 置信度 90%/60%/30% 无推导依据；T2.1 入口点评分启发式无选择依据。plan.md 直接复制 GitNexus 的选择但未论证其在 graphify 的图存储和规模上下文中的适用性。\",\n      \"suggestion\": \"在 P3 任务分解前增加选型依据小节，论证 BM25/RRF/置信度/入口点启发式的选择理由。\"\n    },\n    {\n      \"id\": \"DR-2\",\n      \"severity\": \"major\",\n      \"confidence\": 0.80,\n      \"title\": \"边界与异常设计缺失——调用环检测与动态分发处理未设计\",\n      \"evidence\": \"T2.2 '沿 CALLS 边从入口点 BFS' 未提及环检测：递归调用会导致 BFS 死循环。T1.4-T1.9 各语言解析器未定义如何处理动态分发（方法重写、鸭类型、接口、trait）。T1.12 将'未解析的调用'标注为 AMBIGUOUS 但未定义触发条件清单。\",\n      \"suggestion\": \"T2.2 增加 BFS 环检测设计；T1.3 定义动态分发标记策略；T1.12 明确 AMBIGUOUS 触发条件清单。\"\n    },\n    {\n      \"id\": \"DR-3\",\n      \"severity\": \"major\",\n      \"confidence\": 0.90,\n      \"title\": \"Tree-sitter 关键依赖待确认但 P0 无评估任务\",\n      \"evidence\": \"第10节依赖表：'Tree-sitter Python 绑定 | 如需替换现有 AST 提取为 Tree-sitter（待 P0 评估）| 待确认'。但 P0 任务（T0.1-T0.6）无一涉及 Tree-sitter 评估。此依赖影响是否需要替换 graphify 的核心 AST 提取引擎——架构级决策悬空。\",\n      \"suggestion\": \"在 P0 增加 T0.0 任务：评估 graphify 现有 AST 提取是否能支持 FR-1 要求的符号类型，如不能评估 Tree-sitter 替换成本。\"\n    },\n    {\n      \"id\": \"DR-4\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.70,\n      \"title\": \"P0 退出标准 CALLS 边准确率 80% 偏低，错误传播路径未设计\",\n      \"evidence\": \"P0 退出标准'CALLS 边准确率（人工抽样）≥ 80%'。20% 的错误 CALLS 边会沿 P2→P3 路径传播放大。计划未说明为何 80% 可接受，以及错误案例如何识别和隔离。\",\n      \"suggestion\": \"将 P0 退出标准提高到 ≥ 90%，或明确 80% 为技术可行性验证阈值，P1 需达到 ≥ 95%。\"\n    },\n    {\n      \"id\": \"DR-5\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.75,\n      \"title\": \"风险应对中语言优先级与并行开发假设矛盾\",\n      \"evidence\": \"风险表'按语言优先级降序实现（TS > Python > Go > Java > Rust > JS）'暗示串行实现，但 T1.4-T1.9 声明可并行开发。JavaScript 排最后但 T1.5 说'复用 TypeScript 解析器'——若 JS 依赖 TS，应紧跟 TS。\",\n      \"suggestion\": \"明确语言优先级的含义（集成顺序 vs 范围裁剪保留顺序），修正 JS 位置。\"\n    },\n    {\n      \"id\": \"DR-6\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.65,\n      \"title\": \"P2/P4 框架检测循环依赖导致 P2 退出标准为临时性但未标注\",\n      \"evidence\": \"T2.1 '框架标记（依赖 P4 但可先用硬编码）'，T4.4 '依赖 P2 完成'。P2 使用硬编码框架标记满足 AC-4，P4 替换为真实检测。但 P2 退出标准未标注为临时验证，也未要求 P4 完成后重新验证 AC-4。\",\n      \"suggestion\": \"在 P2 退出标准中标注 AC-4 为临时验证；在 P4 退出标准中增加 AC-4 回归验证。\"\n    }\n  ],\n  \"summary\": \"计划结构清晰但存在 3 项 major 级缺陷：技术选型缺乏对比依据（DR-1）、调用环检测与动态分发边界设计缺失（DR-2）、Tree-sitter 关键依赖待确认但 P0 无评估任务（DR-3）。挑战 spec-reviewer 的 INFERRED 边 over-judgment（INFERRED 在 spec.md 中有定义，是 Part B 产生的现有边类型）和 deployment-config-reviewer 的 CI 配置 over-judgment（计划文档不应指定 CI 工具链）。建议修正后重新审查。\"\n}\n```\n"
+      ]
+    },
+    {
+      "positions": [
+        "[spec-reviewer R2 辩论 - plan.md]\n\n第 2 轮审查维持不通过。接受 design-reviewer 对 INFERRED 边的纠正。核心规格缺陷 4 项 major：NFR 验收标准与退出标准系统性脱节、AC-10 无对应验证任务、MCP 工具接口契约未定义、P4/FR-8 无正式 AC 编号。与 design-reviewer 在 DR-2/DR-3 上形成跨视角共识。\n\n```json\n{\n  \"satisfied\": false,\n  \"findings\": [\n    {\n      \"id\": \"SR-1\",\n      \"severity\": \"major\",\n      \"confidence\": 0.88,\n      \"title\": \"NFR 验收标准与阶段退出标准系统性脱节\",\n      \"evidence\": \"附录映射表将 NFR-4/5/6 归入 P1、NFR-2 归入 P2 和 P5，但各阶段退出标准均未包含对应 NFR 验证条件。NFR 被声明为已覆盖但从未在退出标准中被验证。\",\n      \"suggestion\": \"在每个阶段退出标准中显式列出该阶段映射表声称覆盖的 NFR 及其验证方法。\"\n    },\n    {\n      \"id\": \"SR-2\",\n      \"severity\": \"major\",\n      \"confidence\": 0.85,\n      \"title\": \"AC-10 在 P5 退出标准中声称通过但无对应验证任务\",\n      \"evidence\": \"P5 退出标准列出 AC-10 通过人工审查，但 P5 任务列表中无任何任务涉及社区检测连贯性验证。T1.10 新增边改变了社区检测所依赖的图结构但无验证任务。\",\n      \"suggestion\": \"在 P5 增加 AC-10 验证任务：对含 Resolution 边的图执行社区检测，与基线结果对比。\"\n    },\n    {\n      \"id\": \"SR-3\",\n      \"severity\": \"major\",\n      \"confidence\": 0.82,\n      \"title\": \"新增 4 个 MCP 工具接口契约未定义\",\n      \"evidence\": \"T3.5 注册 context/impact/trace/detect_changes 四工具，但无任务定义输入参数 schema、输出格式、错误码和边界行为。接口契约完整性是 FR-6 的规格要求。\",\n      \"suggestion\": \"在 P3 增加任务：定义 4 个新 MCP 工具的接口契约文档。\"\n    },\n    {\n      \"id\": \"SR-4\",\n      \"severity\": \"major\",\n      \"confidence\": 0.80,\n      \"title\": \"P4（FR-8 框架检测）无正式验收标准编号\",\n      \"evidence\": \"附录 P4 行 AC 列为空。P4 退出标准定义了指标但未映射到编号 AC。8.3 节 AC-1 到 AC-10 无一条对应 FR-8。FR 到 AC 可追溯性断裂。\",\n      \"suggestion\": \"补充 AC-11（框架检测入口点覆盖率 ≥ 70%），映射到 P4。\"\n    },\n    {\n      \"id\": \"SR-5\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.85,\n      \"title\": \"T2.1 依赖标注自相矛盾\",\n      \"evidence\": \"T2.1 描述列声称依赖 P4 但依赖列标注 P1 完成。与 DR-6 收敛。\",\n      \"suggestion\": \"修正 T2.1 依赖列。\"\n    },\n    {\n      \"id\": \"SR-6\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.78,\n      \"title\": \"性能基准环境未定义导致 NFR-1 不可测试（支持 DC-3）\",\n      \"evidence\": \"T5.1 未定义硬件配置、OS、Python 版本。无环境规格的性能数据不可复现。\",\n      \"suggestion\": \"在 T5.1 增加环境规格定义。\"\n    },\n    {\n      \"id\": \"SR-7\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.75,\n      \"title\": \"T2.2 BFS 调用链追踪未定义环检测边界条件（支持 DR-2）\",\n      \"evidence\": \"T2.2 沿 CALLS 边 BFS 但无环检测。递归调用形成环会导致无限循环。\",\n      \"suggestion\": \"T2.2 增加 BFS 环检测设计。\"\n    },\n    {\n      \"id\": \"SR-8\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.72,\n      \"title\": \"Tree-sitter 评估任务缺失影响 FR-1 可实现性（支持 DR-3）\",\n      \"evidence\": \"Tree-sitter 依赖状态待确认但 P0 无评估任务。FR-1 的规格可实现性悬空。\",\n      \"suggestion\": \"在 P0 增加 Tree-sitter 评估任务。\"\n    }\n  ],\n  \"summary\": \"第 2 轮审查维持不通过。接受 design-reviewer 对 INFERRED 边的纠正。核心规格缺陷 4 项 major。与 design-reviewer 在 DR-2/DR-3 上形成跨视角共识。\"\n}\n```\n",
+        "[deployment-config-reviewer R2 辩论 - plan.md]\n\n向 design-reviewer 让步 CI 工具链一条。维持 4 项 major：测试仓库来源与 CI 可复现性、sidecar 一致性与原子写入、--update 崩溃恢复、MCP 工具运行时资源限制。支持 SR-1/SR-2/SR-3 和 DR-2/DR-3。\n\n```json\n{\n  \"satisfied\": false,\n  \"findings\": [\n    {\n      \"id\": \"DCR-1\",\n      \"severity\": \"major\",\n      \"confidence\": 0.80,\n      \"title\": \"测试仓库来源与 CI 可复现性缺失\",\n      \"evidence\": \"T0.1/T5.1 选定测试仓库但未说明来源、许可证、CI 获取策略。CI 在不同环境不可复现。\",\n      \"suggestion\": \"T0.1 增加交付物：测试仓库清单（repo URL + commit pin）+ fixture 固化策略。\"\n    },\n    {\n      \"id\": \"DCR-2\",\n      \"severity\": \"major\",\n      \"confidence\": 0.78,\n      \"title\": \"存储 sidecar 一致性与原子写入设计缺失\",\n      \"evidence\": \"T3.9 创建 .graph/bm25_index.json 作为 sidecar，但未设计原子写入策略、与 graph.json 的一致性约束、stale sidecar 的检测与重建路径。\",\n      \"suggestion\": \"T3.9 增加：sidecar 写入采用 temp-file + atomic rename；定义一致性版本号。\"\n    },\n    {\n      \"id\": \"DCR-3\",\n      \"severity\": \"major\",\n      \"confidence\": 0.72,\n      \"title\": \"--update 崩溃恢复与事务安全性未设计\",\n      \"evidence\": \"T2.7/T2.8 manifest 记录符号级哈希但无回滚路径。--update 中途失败时 manifest 与 graph.json 的恢复未设计。\",\n      \"suggestion\": \"T2.7/T2.8 增加：--update 采用 write-ahead 或 staging-area 模式，失败可回滚。\"\n    },\n    {\n      \"id\": \"DCR-4\",\n      \"severity\": \"major\",\n      \"confidence\": 0.70,\n      \"title\": \"MCP 工具运行时资源限制未定义\",\n      \"evidence\": \"T3.5 注册四工具但仅 impact 设深度上限。trace/context/detect_changes 无 timeout/内存上限/并发策略。\",\n      \"suggestion\": \"T3.5 为每个 MCP 工具定义 timeout、响应大小上限、并发上限。\"\n    },\n    {\n      \"id\": \"DCR-5\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.85,\n      \"title\": \"向 design-reviewer 让步：撤回 CI 工具链发现\",\n      \"evidence\": \"计划文档应声明 CI 策略（§8.4 已做到），工具链选择是实现期决策。\",\n      \"suggestion\": \"无（让步）。\"\n    },\n    {\n      \"id\": \"DCR-6\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.68,\n      \"title\": \"Tree-sitter 依赖可部署性（支持 DR-3）\",\n      \"evidence\": \"Tree-sitter 原生二进制跨平台可用性需提前确认。\",\n      \"suggestion\": \"支持 DR-3 的 T0.0 评估任务建议。\"\n    },\n    {\n      \"id\": \"DCR-7\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.62,\n      \"title\": \"性能基准环境规格缺失\",\n      \"evidence\": \"T5.1/T5.3 无硬件基线与运行环境定义。NFR-1/2 在不同硬件下不可比。\",\n      \"suggestion\": \"T5.1 增加基准硬件配置和运行环境定义。\"\n    }\n  ],\n  \"summary\": \"向 design-reviewer 让步 CI 工具链一条。维持 4 项 major：测试仓库来源与 CI 可复现性、sidecar 一致性与原子写入、--update 崩溃恢复、MCP 工具运行时资源限制。支持 SR-1/SR-2/SR-3 和 DR-2/DR-3。\"\n}\n```\n",
+        "[design-reviewer R2 辩论 - plan.md]\n\n第 2 轮辩论维持 4 项 major（DR-1 技术选型无依据、DR-2 环检测与动态分发缺失、DR-3 Tree-sitter 依赖悬空、DR-7 采纳 SR-3 的 MCP 接口契约缺失）。与 spec-reviewer 在 SR-5/DR-6 上完全收敛。部分修正 SR-1（NFR-5/NFR-6 在 spec.md 有定义但退出标准覆盖缺口有效）。采纳 SR-2/SR-3/DC-2。\n\n```json\n{\n  \"satisfied\": false,\n  \"findings\": [\n    {\n      \"id\": \"DR-1\",\n      \"severity\": \"major\",\n      \"confidence\": 0.88,\n      \"title\": \"[维持] 技术选型缺乏对比依据\",\n      \"evidence\": \"T3.6/T3.7 选定 BM25+RRF(K=60) 但未提供与替代方案的对比；T3.2 置信度 90%/60%/30% 无推导依据；T2.1 入口点评分启发式无选择依据。R1 未被挑战。\",\n      \"suggestion\": \"在 P3 任务分解前增加选型依据小节。\"\n    },\n    {\n      \"id\": \"DR-2\",\n      \"severity\": \"major\",\n      \"confidence\": 0.82,\n      \"title\": \"[维持] 边界与异常设计缺失——调用环检测与动态分发处理未设计\",\n      \"evidence\": \"T2.2 BFS 未提及环检测。T1.4-T1.9 未定义动态分发处理。T1.12 AMBIGUOUS 触发条件未定义。SR-7 独立佐证。\",\n      \"suggestion\": \"T2.2/T3.3 增加 visited-set 环检测；T1.3 定义动态分发标记策略；T1.12 明确 AMBIGUOUS 触发条件清单。\"\n    },\n    {\n      \"id\": \"DR-3\",\n      \"severity\": \"major\",\n      \"confidence\": 0.92,\n      \"title\": \"[维持] Tree-sitter 关键依赖待确认但 P0 无评估任务\",\n      \"evidence\": \"第10节 Tree-sitter 待确认但 P0 任务无评估。DCR-6 从跨平台部署角度独立佐证。\",\n      \"suggestion\": \"在 P0 增加 T0.0 任务：评估现有 AST 提取能力，如不足评估 Tree-sitter 替换成本。\"\n    },\n    {\n      \"id\": \"DR-7\",\n      \"severity\": \"major\",\n      \"confidence\": 0.80,\n      \"title\": \"[采纳 SR-3] MCP 工具接口契约不完整\",\n      \"evidence\": \"T3.5 注册 4 个 MCP 工具但未定义输入参数 schema、输出格式、错误码。AC-7 仅验证'可调用'。\",\n      \"suggestion\": \"在 T3.5 增加每个 MCP 工具的接口契约定义。\"\n    },\n    {\n      \"id\": \"DR-4\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.75,\n      \"title\": \"[维持] P0 退出标准 CALLS 边准确率 80% 偏低\",\n      \"evidence\": \"20% 错误 CALLS 边会沿 P2→P3 传播放大。SR-2 从 AC 量化角度独立佐证。\",\n      \"suggestion\": \"将 P0 退出标准提高到 ≥ 90%，或明确 80% 为技术可行性阈值。\"\n    },\n    {\n      \"id\": \"DR-5\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.75,\n      \"title\": \"[维持] 语言优先级与并行开发假设矛盾\",\n      \"evidence\": \"风险表暗示串行但 T1.4-T1.9 声明可并行。JS 排最后但复用 TS。\",\n      \"suggestion\": \"明确语言优先级含义，修正 JS 位置。\"\n    },\n    {\n      \"id\": \"DR-6\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.75,\n      \"title\": \"[维持+收敛] P2/P4 框架检测循环依赖——与 SR-5 收敛\",\n      \"evidence\": \"T2.1 硬编码框架标记，T4.4 替换。P2 退出标准未标注为临时验证。SR-5 独立发现同一问题。\",\n      \"suggestion\": \"在 P2 退出标准标注 AC-4 为临时验证；P4 退出标准增加 AC-4 回归验证。\"\n    },\n    {\n      \"id\": \"DR-8\",\n      \"severity\": \"minor\",\n      \"confidence\": 0.70,\n      \"title\": \"[采纳 DC-2] 依赖锁定策略缺失影响 NFR-5 确定性\",\n      \"evidence\": \"依赖未锁定意味着 LanguageResolver 接口可能在不同环境行为不一致，违反 NFR-5 确定性。\",\n      \"suggestion\": \"在 P0 或 P1 早期增加依赖锁定任务。\"\n    }\n  ],\n  \"summary\": \"第 2 轮辩论维持 4 项 major。与 spec-reviewer 在 SR-5/DR-6 上完全收敛；部分修正 SR-1（NFR-5/NFR-6 在 spec.md 有定义但退出标准覆盖缺口有效）；采纳 SR-2/SR-3/DC-2。总体判定不变：satisfied=false，需修正后重新审查。\"\n}\n```\n"
+      ]
+    }
+  ],
+  "final_verdicts": {
+    "spec-reviewer": {
+      "severity": "major",
+      "confidence": 0.87,
+      "reasoning": "经 2 轮辩论后独立复核全部证据。4 项 major 规格缺陷均成立且未被有效挑战驳回。辩论中 design-reviewer 对 INFERRED 边的纠正被接受，并据此新增 1 项 finding。与 design-reviewer 在 BFS 环检测和 Tree-sitter 评估缺失上形成跨视角共识。",
+      "findings": [
+        {
+          "description": "NFR 验收标准与阶段退出标准系统性脱节：P1 退出标准无 NFR-4/5/6 验证条件，P2 退出标准无 NFR-2 验证条件。NFR 被声明为已覆盖但从未在退出标准中被验证。",
+          "severity": "major",
+          "confidence": 0.9,
+          "evidence": "附录将 NFR-4/5/6 归入 P1、NFR-2 归入 P2 和 P5，但各阶段退出标准均未包含对应 NFR 验证条件。",
+          "suggestion": "在每个阶段退出标准中显式列出该阶段映射表声称覆盖的 NFR 及其验证方法。"
+        },
+        {
+          "description": "AC-10 在 P5 退出标准中声称通过但 P5 任务列表无对应验证任务。T1.10 改变了社区检测依赖的图结构但无验证。",
+          "severity": "major",
+          "confidence": 0.87,
+          "evidence": "P5 退出标准列出 AC-10 通过人工审查，但 P5 任务列表无对应任务。",
+          "suggestion": "在 P5 增加 AC-10 验证任务。"
+        },
+        {
+          "description": "新增 4 个 MCP 工具接口契约未定义（输入参数 schema、输出格式、错误码）。",
+          "severity": "major",
+          "confidence": 0.85,
+          "evidence": "T3.5 注册 context/impact/trace/detect_changes 四工具但无接口契约定义任务。AC-7 仅验证'可调用'。",
+          "suggestion": "在 P3 增加任务：定义 4 个新 MCP 工具的接口契约文档。"
+        },
+        {
+          "description": "P4（FR-8 框架检测）无正式验收标准编号。FR→AC 可追溯性断裂。",
+          "severity": "major",
+          "confidence": 0.85,
+          "evidence": "附录 P4 行 AC 列为空。8.3 节 AC-1 到 AC-10 无一条对应 FR-8。",
+          "suggestion": "补充 AC-11 映射到 P4。"
+        },
+        {
+          "description": "T2.1 依赖标注自相矛盾：描述列声称依赖 P4 但依赖列标注 P1 完成。深层反映 P2↔P4 循环依赖。",
+          "severity": "minor",
+          "confidence": 0.9,
+          "evidence": "T2.1 描述列与依赖列不一致。T4.4 依赖 P2 完成，形成循环。",
+          "suggestion": "修正 T2.1 依赖列，增加 P2 返工风险条目。"
+        },
+        {
+          "description": "T5.1 性能基准未定义硬件配置、OS、Python 版本。NFR-1 可测试性依赖于未指定的运行环境。",
+          "severity": "minor",
+          "confidence": 0.85,
+          "evidence": "T5.1 无环境定义。NFR-1 ≤60 秒阈值无环境约束。",
+          "suggestion": "在 T5.1 增加环境规格定义。"
+        },
+        {
+          "description": "T2.2 BFS 调用链追踪未定义环检测边界条件。递归调用形成环会导致无限循环。",
+          "severity": "minor",
+          "confidence": 0.8,
+          "evidence": "T2.2 沿 CALLS 边 BFS 但无环检测描述。",
+          "suggestion": "T2.2 增加 BFS 环检测设计。"
+        },
+        {
+          "description": "Tree-sitter 依赖状态待确认但 P0 无评估任务。FR-1 可实现性悬空。",
+          "severity": "minor",
+          "confidence": 0.78,
+          "evidence": "Tree-sitter 待确认但 P0 任务无评估。",
+          "suggestion": "在 P0 增加 Tree-sitter 评估任务。"
+        },
+        {
+          "description": "T3.2 置信度评分引用 INFERRED 边类型但 T1.12 仅定义 EXTRACTED 和 AMBIGUOUS。INFERRED 边无创建机制。",
+          "severity": "minor",
+          "confidence": 0.82,
+          "evidence": "T3.2 引用 INFERRED 边 60% 置信度，但 T1.12 仅定义两种边标注。",
+          "suggestion": "增加 INFERRED 边创建任务或修正 T3.2 移除 INFERRED 评分项。"
+        }
+      ],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": null
+    },
+    "deployment-config-reviewer": {
+      "severity": "major",
+      "confidence": 0.78,
+      "reasoning": "本计划是一份执行计划文档，不包含实际部署配置，因此审查聚焦于计划是否为后续可部署、可运维、可复现的实现预留了足够的操作约束。向 design-reviewer 让步 CI 工具链选择一条。维持 4 项 major 发现。",
+      "findings": [
+        {
+          "description": "测试仓库来源与 CI 可复现性缺失：T0.1/T5.1 选定测试仓库但未说明来源、版本固定、许可证合规性、CI 获取策略。",
+          "severity": "major",
+          "confidence": 0.8,
+          "evidence": "T0.1 交付物无 repo URL/commit pin/fixture 固化策略。",
+          "suggestion": "T0.1 增加交付物：测试仓库清单 + fixture 固化策略。"
+        },
+        {
+          "description": "存储 sidecar 一致性与原子写入设计缺失：.graph/bm25_index.json 与 graph.json 可能漂移。",
+          "severity": "major",
+          "confidence": 0.78,
+          "evidence": "T3.9 无原子写入策略、无一致性版本号、无 stale 检测重建路径。",
+          "suggestion": "T3.9 增加：temp-file + atomic rename + 一致性版本号。"
+        },
+        {
+          "description": "--update 崩溃恢复与事务安全性未设计：manifest 无回滚路径。",
+          "severity": "major",
+          "confidence": 0.72,
+          "evidence": "T2.7/T2.8 无 write-ahead/staging-area，中途失败无回滚。",
+          "suggestion": "T2.7/T2.8 增加：write-ahead 或 staging-area 模式。"
+        },
+        {
+          "description": "MCP 工具运行时资源限制未定义：仅 impact 设深度上限，其余 3 工具无 timeout/内存/并发上限。",
+          "severity": "major",
+          "confidence": 0.7,
+          "evidence": "T3.5 仅 impact 有深度限制，trace/context/detect_changes 无资源边界。",
+          "suggestion": "T3.5 为每个 MCP 工具定义 timeout、响应大小上限、并发上限。"
+        },
+        {
+          "description": "Tree-sitter 依赖可部署性未提前确认（支持 DR-3）。",
+          "severity": "minor",
+          "confidence": 0.68,
+          "evidence": "Tree-sitter 跨平台二进制可用性需提前确认。",
+          "suggestion": "支持 DR-3 的 T0.0 评估任务建议。"
+        },
+        {
+          "description": "性能基准环境规格缺失：T5.1/T5.3 无硬件基线与运行环境定义。",
+          "severity": "minor",
+          "confidence": 0.62,
+          "evidence": "NFR-1/2 在不同硬件下不可比。",
+          "suggestion": "T5.1 增加基准硬件配置定义。"
+        },
+        {
+          "description": "CI 工具链选择属实现期决策（向 design-reviewer 让步）。",
+          "severity": "minor",
+          "confidence": 0.85,
+          "evidence": "§8.4 已声明 CI 策略，工具链选择是实现期决策。",
+          "suggestion": "无（让步）。"
+        }
+      ],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": null
+    },
+    "design-reviewer": {
+      "severity": "major",
+      "confidence": 0.86,
+      "reasoning": "独立审查 plan.md 全文及 2 轮辩论记录后，确认设计在结构上完整，但在 4 个维度存在实质性设计缺陷，足以导致实施阶段返工或质量不可控。",
+      "findings": [
+        {
+          "description": "技术选型缺乏对比依据——BM25+RRF(K=60)、置信度 90%/60%/30%、入口点评分启发式均直接给出结论",
+          "severity": "major",
+          "confidence": 0.88,
+          "evidence": "T3.6/T3.7 选定 BM25+RRF 未提供与替代方案对比；T3.2 置信度无推导依据；T2.1 入口点评分无权重选择依据。",
+          "suggestion": "在 P3 启动前增加选型依据小节，论证选择理由。"
+        },
+        {
+          "description": "边界与异常设计缺失——调用环检测、动态分发处理、AMBIGUOUS 触发条件均未设计",
+          "severity": "major",
+          "confidence": 0.84,
+          "evidence": "T2.2 BFS 未提及环检测；T1.4-T1.9 未定义动态分发处理；T1.12 AMBIGUOUS 触发条件未列举。",
+          "suggestion": "T2.2/T3.3 增加 visited-set 环检测；T1.3 定义动态分发标记策略；T1.12 明确 AMBIGUOUS 触发条件清单。"
+        },
+        {
+          "description": "Tree-sitter 关键依赖待确认但 P0 无评估任务",
+          "severity": "major",
+          "confidence": 0.9,
+          "evidence": "第10节 Tree-sitter 待确认但 P0 任务无评估。若需替换整个 P1 方案前提不成立。",
+          "suggestion": "在 P0 增加 T0.0 任务：评估现有 AST 提取能力，如不足评估 Tree-sitter 替换成本。"
+        },
+        {
+          "description": "MCP 工具接口契约不完整——4 个新工具无参数 schema、输出格式、错误码定义",
+          "severity": "major",
+          "confidence": 0.82,
+          "evidence": "T3.5 仅声明工具名，未定义接口契约。AC-7 仅验证'可调用'未覆盖响应格式。",
+          "suggestion": "在 T3.5 增加每个 MCP 工具的接口契约定义。"
+        },
+        {
+          "description": "P0 退出标准 CALLS 边准确率 80% 偏低，错误边会沿 P2→P3 传播放大",
+          "severity": "minor",
+          "confidence": 0.78,
+          "evidence": "P0 退出标准 80%。20% 错误 CALLS 边进入 P2/P3 导致结果失真。",
+          "suggestion": "将 P0 退出标准提高到 ≥ 90%。"
+        },
+        {
+          "description": "语言优先级与并行开发假设矛盾",
+          "severity": "minor",
+          "confidence": 0.76,
+          "evidence": "风险表暗示串行但 T1.4-T1.9 声明可并行。JS 排最后但复用 TS。",
+          "suggestion": "明确语言优先级含义，修正 JS 位置。"
+        },
+        {
+          "description": "P2/P4 框架检测循环依赖——P2 硬编码框架标记，P4 替换，P2 退出标准未标注临时性",
+          "severity": "minor",
+          "confidence": 0.78,
+          "evidence": "T2.1 硬编码框架标记，T4.4 替换。P2 退出标准 AC-4 未标注为临时验证。",
+          "suggestion": "在 P2 退出标准标注 AC-4 为临时验证；P4 增加 AC-4 回归验证。"
+        },
+        {
+          "description": "依赖锁定策略缺失影响 NFR-5 确定性",
+          "severity": "minor",
+          "confidence": 0.72,
+          "evidence": "第10节依赖表未提及版本锁定。不同环境行为可能不一致。",
+          "suggestion": "在 P0 或 P1 早期增加依赖锁定任务。"
+        }
+      ],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": null
+    }
+  },
+  "verdict": {
+    "severity": "major",
+    "confidence": 0.8367,
+    "reasoning": "经 2 轮辩论后独立复核全部证据。4 项 major 规格缺陷均成立且未被有效挑战驳回。辩论中 design-reviewer 对 INFERRED 边的纠正被接受，并据此新增 1 项 finding。与 design-reviewer 在 BFS 环检测和 Tree-sitter 评估缺失上形成跨视角共识。\n---\n本计划是一份执行计划文档，不包含实际部署配置，因此审查聚焦于计划是否为后续可部署、可运维、可复现的实现预留了足够的操作约束。向 design-reviewer 让步 CI 工具链选择一条。维持 4 项 major 发现。\n---\n独立审查 plan.md 全文及 2 轮辩论记录后，确认设计在结构上完整，但在 4 个维度存在实质性设计缺陷，足以导致实施阶段返工或质量不可控。",
+    "findings": [
+      {
+        "description": "NFR 验收标准与阶段退出标准系统性脱节：P1 退出标准无 NFR-4/5/6 验证条件，P2 退出标准无 NFR-2 验证条件。NFR 被声明为已覆盖但从未在退出标准中被验证。",
+        "severity": "major",
+        "confidence": 0.9,
+        "evidence": "附录将 NFR-4/5/6 归入 P1、NFR-2 归入 P2 和 P5，但各阶段退出标准均未包含对应 NFR 验证条件。",
+        "suggestion": "在每个阶段退出标准中显式列出该阶段映射表声称覆盖的 NFR 及其验证方法。"
+      },
+      {
+        "description": "AC-10 在 P5 退出标准中声称通过但 P5 任务列表无对应验证任务。T1.10 改变了社区检测依赖的图结构但无验证。",
+        "severity": "major",
+        "confidence": 0.87,
+        "evidence": "P5 退出标准列出 AC-10 通过人工审查，但 P5 任务列表无对应任务。",
+        "suggestion": "在 P5 增加 AC-10 验证任务。"
+      },
+      {
+        "description": "新增 4 个 MCP 工具接口契约未定义（输入参数 schema、输出格式、错误码）。",
+        "severity": "major",
+        "confidence": 0.85,
+        "evidence": "T3.5 注册 context/impact/trace/detect_changes 四工具但无接口契约定义任务。AC-7 仅验证'可调用'。",
+        "suggestion": "在 P3 增加任务：定义 4 个新 MCP 工具的接口契约文档。"
+      },
+      {
+        "description": "P4（FR-8 框架检测）无正式验收标准编号。FR→AC 可追溯性断裂。",
+        "severity": "major",
+        "confidence": 0.85,
+        "evidence": "附录 P4 行 AC 列为空。8.3 节 AC-1 到 AC-10 无一条对应 FR-8。",
+        "suggestion": "补充 AC-11 映射到 P4。"
+      },
+      {
+        "description": "T2.1 依赖标注自相矛盾：描述列声称依赖 P4 但依赖列标注 P1 完成。深层反映 P2↔P4 循环依赖。",
+        "severity": "minor",
+        "confidence": 0.9,
+        "evidence": "T2.1 描述列与依赖列不一致。T4.4 依赖 P2 完成，形成循环。",
+        "suggestion": "修正 T2.1 依赖列，增加 P2 返工风险条目。"
+      },
+      {
+        "description": "T5.1 性能基准未定义硬件配置、OS、Python 版本。NFR-1 可测试性依赖于未指定的运行环境。",
+        "severity": "minor",
+        "confidence": 0.85,
+        "evidence": "T5.1 无环境定义。NFR-1 ≤60 秒阈值无环境约束。",
+        "suggestion": "在 T5.1 增加环境规格定义。"
+      },
+      {
+        "description": "T2.2 BFS 调用链追踪未定义环检测边界条件。递归调用形成环会导致无限循环。",
+        "severity": "minor",
+        "confidence": 0.8,
+        "evidence": "T2.2 沿 CALLS 边 BFS 但无环检测描述。",
+        "suggestion": "T2.2 增加 BFS 环检测设计。"
+      },
+      {
+        "description": "Tree-sitter 依赖状态待确认但 P0 无评估任务。FR-1 可实现性悬空。",
+        "severity": "minor",
+        "confidence": 0.78,
+        "evidence": "Tree-sitter 待确认但 P0 任务无评估。",
+        "suggestion": "在 P0 增加 Tree-sitter 评估任务。"
+      },
+      {
+        "description": "T3.2 置信度评分引用 INFERRED 边类型但 T1.12 仅定义 EXTRACTED 和 AMBIGUOUS。INFERRED 边无创建机制。",
+        "severity": "minor",
+        "confidence": 0.82,
+        "evidence": "T3.2 引用 INFERRED 边 60% 置信度，但 T1.12 仅定义两种边标注。",
+        "suggestion": "增加 INFERRED 边创建任务或修正 T3.2 移除 INFERRED 评分项。"
+      },
+      {
+        "description": "测试仓库来源与 CI 可复现性缺失：T0.1/T5.1 选定测试仓库但未说明来源、版本固定、许可证合规性、CI 获取策略。",
+        "severity": "major",
+        "confidence": 0.8,
+        "evidence": "T0.1 交付物无 repo URL/commit pin/fixture 固化策略。",
+        "suggestion": "T0.1 增加交付物：测试仓库清单 + fixture 固化策略。"
+      },
+      {
+        "description": "存储 sidecar 一致性与原子写入设计缺失：.graph/bm25_index.json 与 graph.json 可能漂移。",
+        "severity": "major",
+        "confidence": 0.78,
+        "evidence": "T3.9 无原子写入策略、无一致性版本号、无 stale 检测重建路径。",
+        "suggestion": "T3.9 增加：temp-file + atomic rename + 一致性版本号。"
+      },
+      {
+        "description": "--update 崩溃恢复与事务安全性未设计：manifest 无回滚路径。",
+        "severity": "major",
+        "confidence": 0.72,
+        "evidence": "T2.7/T2.8 无 write-ahead/staging-area，中途失败无回滚。",
+        "suggestion": "T2.7/T2.8 增加：write-ahead 或 staging-area 模式。"
+      },
+      {
+        "description": "MCP 工具运行时资源限制未定义：仅 impact 设深度上限，其余 3 工具无 timeout/内存/并发上限。",
+        "severity": "major",
+        "confidence": 0.7,
+        "evidence": "T3.5 仅 impact 有深度限制，trace/context/detect_changes 无资源边界。",
+        "suggestion": "T3.5 为每个 MCP 工具定义 timeout、响应大小上限、并发上限。"
+      },
+      {
+        "description": "Tree-sitter 依赖可部署性未提前确认（支持 DR-3）。",
+        "severity": "minor",
+        "confidence": 0.68,
+        "evidence": "Tree-sitter 跨平台二进制可用性需提前确认。",
+        "suggestion": "支持 DR-3 的 T0.0 评估任务建议。"
+      },
+      {
+        "description": "性能基准环境规格缺失：T5.1/T5.3 无硬件基线与运行环境定义。",
+        "severity": "minor",
+        "confidence": 0.62,
+        "evidence": "NFR-1/2 在不同硬件下不可比。",
+        "suggestion": "T5.1 增加基准硬件配置定义。"
+      },
+      {
+        "description": "CI 工具链选择属实现期决策（向 design-reviewer 让步）。",
+        "severity": "minor",
+        "confidence": 0.85,
+        "evidence": "§8.4 已声明 CI 策略，工具链选择是实现期决策。",
+        "suggestion": "无（让步）。"
+      },
+      {
+        "description": "技术选型缺乏对比依据——BM25+RRF(K=60)、置信度 90%/60%/30%、入口点评分启发式均直接给出结论",
+        "severity": "major",
+        "confidence": 0.88,
+        "evidence": "T3.6/T3.7 选定 BM25+RRF 未提供与替代方案对比；T3.2 置信度无推导依据；T2.1 入口点评分无权重选择依据。",
+        "suggestion": "在 P3 启动前增加选型依据小节，论证选择理由。"
+      },
+      {
+        "description": "边界与异常设计缺失——调用环检测、动态分发处理、AMBIGUOUS 触发条件均未设计",
+        "severity": "major",
+        "confidence": 0.84,
+        "evidence": "T2.2 BFS 未提及环检测；T1.4-T1.9 未定义动态分发处理；T1.12 AMBIGUOUS 触发条件未列举。",
+        "suggestion": "T2.2/T3.3 增加 visited-set 环检测；T1.3 定义动态分发标记策略；T1.12 明确 AMBIGUOUS 触发条件清单。"
+      },
+      {
+        "description": "Tree-sitter 关键依赖待确认但 P0 无评估任务",
+        "severity": "major",
+        "confidence": 0.9,
+        "evidence": "第10节 Tree-sitter 待确认但 P0 任务无评估。若需替换整个 P1 方案前提不成立。",
+        "suggestion": "在 P0 增加 T0.0 任务：评估现有 AST 提取能力，如不足评估 Tree-sitter 替换成本。"
+      },
+      {
+        "description": "MCP 工具接口契约不完整——4 个新工具无参数 schema、输出格式、错误码定义",
+        "severity": "major",
+        "confidence": 0.82,
+        "evidence": "T3.5 仅声明工具名，未定义接口契约。AC-7 仅验证'可调用'未覆盖响应格式。",
+        "suggestion": "在 T3.5 增加每个 MCP 工具的接口契约定义。"
+      },
+      {
+        "description": "P0 退出标准 CALLS 边准确率 80% 偏低，错误边会沿 P2→P3 传播放大",
+        "severity": "minor",
+        "confidence": 0.78,
+        "evidence": "P0 退出标准 80%。20% 错误 CALLS 边进入 P2/P3 导致结果失真。",
+        "suggestion": "将 P0 退出标准提高到 ≥ 90%。"
+      },
+      {
+        "description": "语言优先级与并行开发假设矛盾",
+        "severity": "minor",
+        "confidence": 0.76,
+        "evidence": "风险表暗示串行但 T1.4-T1.9 声明可并行。JS 排最后但复用 TS。",
+        "suggestion": "明确语言优先级含义，修正 JS 位置。"
+      },
+      {
+        "description": "P2/P4 框架检测循环依赖——P2 硬编码框架标记，P4 替换，P2 退出标准未标注临时性",
+        "severity": "minor",
+        "confidence": 0.78,
+        "evidence": "T2.1 硬编码框架标记，T4.4 替换。P2 退出标准 AC-4 未标注为临时验证。",
+        "suggestion": "在 P2 退出标准标注 AC-4 为临时验证；P4 增加 AC-4 回归验证。"
+      },
+      {
+        "description": "依赖锁定策略缺失影响 NFR-5 确定性",
+        "severity": "minor",
+        "confidence": 0.72,
+        "evidence": "第10节依赖表未提及版本锁定。不同环境行为可能不一致。",
+        "suggestion": "在 P0 或 P1 早期增加依赖锁定任务。"
+      }
+    ],
+    "satisfied": false,
+    "escalate_to_human": true,
+    "calibrated_confidence": 0.6487,
+    "original_content": "# 执行计划：在 graphify 图谱基础上对标 GitNexus 补齐能力\n\n| 字段 | 值 |\n|------|-----|\n| 文档版本 | v1.0 |\n| 创建日期 | 2026-09-14 |\n| 关联规格 | spec.md v1.0 |\n| 状态 | 草案 |\n\n---\n\n## 1. 计划概述\n\n本计划将 spec.md 定义的功能需求拆解为 6 个阶段（P0–P5），按依赖关系串行推进，\n阶段内任务尽量并行。核心路径为：AST 符号增强 → 跨文件解析 → 执行流与增量更新 →\n查询分析工具 → 对标特性补齐 → 性能验证。\n\n每个阶段交付可验证的中间产物，避免到最后才集成。阶段间的依赖关系：\n\n```\nP0 (原型验证) → P1 (符号级图模型) → P2 (增量更新引擎) → P3 (查询与分析)\n                                                          ↓\n                                        P4 (对标特性) → P5 (性能与集成)\n```\n\nP4 依赖 P3 的 MCP 工具框架（框架检测结果需通过 context 工具暴露），但 P4 的 AST\n检测规则开发可与 P3 后半段并行。\n\n---\n\n## 2. P0：原型验证（2 周）\n\n### 2.1 目标\n\n验证跨文件调用解析的技术可行性，以 TypeScript 为试点语言，在 graphify 现有 AST\n提取（Part A）之后增加一个 Resolution 原型阶段。\n\n### 2.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T0.1 | 选定测试仓库：3 个 TypeScript 开源项目（~100–300 文件），覆盖不同框架 | 无 | 测试仓库集合 + 选型记录 |\n| T0.2 | 分析 graphify AST 提取输出的节点/边结构，确定 CALLS 边的接入点 | 无 | AST 输出结构分析文档 |\n| T0.3 | 实现 TypeScript 导入解析器原型：解析 `import { X } from 'path'`、`import Y from 'path'`、`import * as Z from 'path'` | T0.2 | `ts_import_resolver.py` 原型 |\n| T0.4 | 实现 TypeScript 调用解析器原型：沿 AST 调用节点 + 导入表，生成 CALLS 边 | T0.3 | `ts_call_resolver.py` 原型 |\n| T0.5 | 将 Resolution 原型接入 Part A → Part C 合并流程，生成含 CALLS 边的 graph.json | T0.4 | 原型端到端流程 |\n| T0.6 | 验证：对测试仓库手动检查 CALLS 边的准确性，记录误解析/漏解析案例 | T0.5 | 验证报告 |\n\n### 2.3 退出标准\n\n- TypeScript 测试仓库的 CALLS 边准确率（人工抽样）≥ 80%。\n- 导入解析覆盖 named/default/wildcard 三种形式。\n- 原型流程不破坏现有 Part A → Part C 合并逻辑。\n\n---\n\n## 3. P1：符号级图模型（4 周）\n\n### 3.1 目标\n\n将 P0 原型扩展为完整的符号级图模型，实现 FR-1（符号提取增强）和 FR-2（跨文件\n调用与引用边解析），覆盖 6 种语言。\n\n### 3.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T1.1 | 扩展 AST 提取的符号类型：函数、方法、类、接口、类型别名、变量声明、模块 | P0 完成 | 增强后的 `extract()` 输出 |\n| T1.2 | 为符号节点增加限定名（qualified name）字段，支持跨文件符号去重 | T1.1 | 符号节点 schema 更新 |\n| T1.3 | 实现语言解析器注册机制：`LanguageResolver` 接口 + 每语言实现 | T1.1 | `resolver_registry.py` |\n| T1.4 | TypeScript 解析器：导入解析 + 调用解析 + 类继承 + DEFINES 边 | T1.3 | `ts_resolver.py` |\n| T1.5 | JavaScript 解析器：复用 TypeScript 解析器，处理 CommonJS/ESM 差异 | T1.4 | `js_resolver.py` |\n| T1.6 | Python 解析器：`import`/`from...import` 解析 + 调用解析 + 类继承 | T1.3 | `python_resolver.py` |\n| T1.7 | Go 解析器：`import` 解析 + 调用解析 + struct 嵌入（Go 继承机制） | T1.3 | `go_resolver.py` |\n| T1.8 | Java 解析器：`import` 解析 + 调用解析 + extends/implements | T1.3 | `java_resolver.py` |\n| T1.9 | Rust 解析器：`use` 解析 + 调用解析 + trait 实现 | T1.3 | `rust_resolver.py` |\n| T1.10 | 更新 Part C 合并逻辑：合并 AST 节点 + Resolution 边 | T1.4–T1.9 | 增强后的合并流程 |\n| T1.11 | 更新图健康检查（diagnose_extraction）：覆盖 CALLS/IMPORTS/HERITAGE 边的悬空端点检测 | T1.10 | 增强后的诊断 |\n| T1.12 | 新增边类型标注为 EXTRACTED，未解析的调用标注为 AMBIGUOUS | T1.10 | 边来源标注 |\n\n### 3.3 依赖说明\n\n- T1.4–T1.9（6 种语言解析器）可并行开发，共享 T1.3 定义的 `LanguageResolver`\n  接口。\n- T1.10 和 T1.11 依赖全部解析器完成。\n\n### 3.4 交付物\n\n- 6 种语言的符号提取与 Resolution 阶段，集成到 graphify 主流程。\n- 更新后的 `.graph/graph.json` 包含 CALLS/IMPORTS/HERITAGE/DEFINES 边。\n- 图健康检查覆盖新增边类型。\n\n### 3.5 退出标准\n\n- 满足 AC-1（符号提取覆盖）和 AC-2/AC-3（调用边与导入边正确性）。\n- 6 种语言各自的测试仓库通过 Resolution 阶段，无崩溃。\n\n---\n\n## 4. P2：增量更新引擎（3 周）\n\n### 4.1 目标\n\n实现 FR-3（执行流追踪）和 FR-5（git-diff 影响映射），增强增量更新引擎的代码\n分析能力。\n\n### 4.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T2.1 | 设计入口点评分启发式：函数名模式（`main`/`handle`/`test_*`）、框架标记（依赖 P4 但可先用硬编码）、调用入度/出度 | P1 完成 | 入口点评分算法 |\n| T2.2 | 实现调用链追踪：沿 CALLS 边从入口点 BFS，构建 process 节点 | T2.1 | `process_detector.py` |\n| T2.3 | process 节点 schema：入口点符号、调用步骤列表、覆盖符号集合 | T2.2 | process 节点定义 |\n| T2.4 | 集成到 Step 4 构建流程：cluster → process detection → 输出 | T2.3 | 完整构建流程 |\n| T2.5 | 实现 git-diff 解析：文件级 + 行级 diff → 映射到符号节点 | P1 完成 | `diff_parser.py` |\n| T2.6 | 实现影响传播：从变更符号出发，沿 CALLS/HERITAGE 边传播到受影响 process | T2.5, T2.2 | `impact_mapper.py` |\n| T2.7 | 集成到 `--update` 流程：`--update` 触发重新提取后，自动执行影响映射报告 | T2.6 | 增强后的 `--update` |\n| T2.8 | 更新 manifest 机制：manifest 记录符号级哈希（非仅文件级），支持符号粒度增量 | T2.5 | 增强后的 manifest |\n\n### 4.3 交付物\n\n- 执行流追踪能力（process 节点）集成到图谱构建流程。\n- git-diff 影响映射工具，可作为独立命令或 MCP 工具调用。\n- 增强后的 `--update` 流程。\n\n### 4.4 退出标准\n\n- 满足 AC-4（执行流覆盖完整调用链）和 AC-6（git-diff 影响映射正确）。\n- 增量更新后，process 节点正确反映变更后的调用链。\n\n---\n\n## 5. P3：查询与分析能力（4 周）\n\n### 5.1 目标\n\n实现 FR-4（影响分析）、FR-6（MCP 工具扩展）和 FR-7（混合搜索），补齐查询层能力。\n\n### 5.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T3.1 | 实现影响分析核心：给定符号 ID，沿 CALLS 边双向遍历，按深度分组 | P1 完成 | `impact_analyzer.py` |\n| T3.2 | 实现置信度评分：EXTRACTED 边 → 90%、INFERRED 边 → 60%、AMBIGUOUS 边 → 30% | T3.1 | 置信度评分模块 |\n| T3.3 | 实现 trace 工具：两个符号间的最短有向调用路径（BFS on CALLS edges） | P1 完成 | `trace.py` |\n| T3.4 | 实现 context 工具：给定符号，聚合调用者、被调用者、社区归属、参与 process | P2 完成 | `context.py` |\n| T3.5 | 扩展 MCP server：注册 context/impact/trace/detect_changes 工具 | T3.1–T3.4, T2.6 | 增强后的 MCP server |\n| T3.6 | 实现 BM25 倒排索引：索引符号名、限定名、文件路径、文档注释 | P1 完成 | `bm25_index.py` |\n| T3.7 | 实现 RRF 融合：BM25 排名 + 语义向量排名 → RRF（K=60）融合结果 | T3.6 | `hybrid_search.py` |\n| T3.8 | 集成到 query 工具：query 命令优先使用混合搜索，回退到 BFS/DFS | T3.7 | 增强后的 query |\n| T3.9 | 更新嵌入索引：BM25 索引作为独立侧车（`.graph/bm25_index.json`），不膨胀 graph.json | T3.6 | 索引侧车文件 |\n\n### 5.3 交付物\n\n- 影响分析、trace、context 三个分析工具。\n- MCP 工具集扩展至 7 个工具（query/path/explain + context/impact/trace/detect_changes）。\n- BM25 + RRF 混合搜索引擎。\n\n### 5.4 退出标准\n\n- 满足 AC-5（影响分析深度分组）、AC-7（MCP 工具可调用）、AC-8（混合搜索优于纯向量）。\n- 现有 query/path/explain 行为不退化。\n\n---\n\n## 6. P4：GitNexus 对标特性（2 周）\n\n### 6.1 目标\n\n实现 FR-8（框架检测与入口点配置），完善入口点识别能力，使执行流追踪的入口点\n质量接近 GitNexus 水平。\n\n### 6.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T4.1 | 定义框架检测规则 schema：AST 节点模式 → 框架标签 + 入口点权重 | P1 完成 | 规则 schema |\n| T4.2 | 实现框架检测引擎：AST 模式匹配，标记符号节点 | T4.1 | `framework_detector.py` |\n| T4.3 | 编写框架规则集：Express、FastAPI、Spring、React、Gin、Actix | T4.1 | 6 个框架规则文件 |\n| T4.4 | 集成到入口点评分（T2.1）：框架标记作为评分输入信号 | T4.2, P2 完成 | 增强后的入口点评分 |\n| T4.5 | 框架标签通过 context MCP 工具暴露 | T3.5, T4.2 | context 工具增强 |\n| T4.6 | 验证：对使用已知框架的测试仓库，检查入口点识别覆盖率 | T4.4 | 验证报告 |\n\n### 6.3 交付物\n\n- 框架检测引擎 + 6 个框架规则集。\n- 增强后的入口点评分（融合框架信号）。\n- 框架标签在 context 工具中可见。\n\n### 6.4 退出标准\n\n- 6 个框架的测试仓库中，入口点识别覆盖率 ≥ 70%。\n- 框架规则可通过配置文件扩展，无需修改核心代码。\n\n---\n\n## 7. P5：性能与集成（2 周）\n\n### 7.1 目标\n\n验证 NFR-1/2/3（性能、增量更新耗时、存储占用），优化瓶颈，完成文档与示例。\n\n### 7.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T5.1 | 性能基准：对 500/2000/5000 文件仓库执行全量索引，记录各阶段耗时 | P1–P4 完成 | 性能基准报告 |\n| T5.2 | 优化 Resolution 阶段：并行化语言解析器调用，减少串行等待 | T5.1 | 性能优化补丁 |\n| T5.3 | 增量更新基准：对 5000 文件仓库执行单文件变更的 `--update`，记录耗时 | T5.1 | 增量更新基准 |\n| T5.4 | 存储基准：测量 graph.json + BM25 索引 + 嵌入索引的总体积 | T5.1 | 存储报告 |\n| T5.5 | 向后兼容验证：对不含 Resolution 边的旧 graph.json 执行 query，确认无退化 | P3 完成 | 兼容性报告 |\n| T5.6 | 更新 SKILL.md：增加 Resolution 阶段说明、新 MCP 工具文档 | 全部完成 | SKILL.md 更新 |\n| T5.7 | 编写示例：3 个使用场景（影响分析、执行流追踪、变更检测）的端到端示例 | 全部完成 | 示例文档 |\n\n### 7.3 退出标准\n\n- NFR-1：500 文件仓库全量索引 ≤ 60 秒。\n- NFR-3：graph.json 体积增长 ≤ 3 倍。\n- NFR-4：旧 graph.json 的 query 行为无退化。\n- AC-9（向后兼容）通过。\n- AC-10（社区检测语义连贯性）通过人工审查。\n\n---\n\n## 8. 测试与验收策略\n\n### 8.1 测试分层\n\n| 层级 | 范围 | 方法 | 自动化 |\n|------|------|------|--------|\n| 单元测试 | 每个解析器、分析器、索引器的独立逻辑 | pytest + MockLLM（零真实 API） | 全自动 |\n| 集成测试 | AST 提取 → Resolution → 合并 → 构建端到端 | 真实测试仓库样本 | 半自动（CI 触发） |\n| 对标测试 | 与 GitNexus 对同一仓库的输出对比 | 手动执行 GitNexus + 结果对比 | 手动 |\n| 性能测试 | 各阶段耗时与存储占用 | 基准脚本 + 仓库规模矩阵 | 半自动 |\n\n### 8.2 测试仓库\n\n准备 3 组测试仓库样本：\n\n1. **小型仓库**（~50 文件）：单语言，覆盖所有符号类型与边类型，用于单元测试。\n2. **中型仓库**（~500 文件）：多语言混合，含框架使用，用于集成测试与性能基准。\n3. **大型仓库**（~5000 文件）：真实开源项目，用于性能验证与对标测试。\n\n### 8.3 验收标准映射\n\n| 验收标准 | 验证阶段 | 验证方法 |\n|----------|----------|----------|\n| AC-1 符号提取覆盖 | P1 | 单元测试：每种语言的固定样本仓库 |\n| AC-2 调用边正确 | P1 | 集成测试：已知调用关系的断言 |\n| AC-3 导入边正确 | P1 | 单元测试：named/default/wildcard import 测试样本 |\n| AC-4 执行流覆盖 | P2 | 集成测试：入口点到终端调用的路径断言 |\n| AC-5 影响分析深度 | P3 | 单元测试：已知依赖结构的深度分组断言 |\n| AC-6 git-diff 映射 | P2 | 集成测试：模拟 diff → 受影响符号断言 |\n| AC-7 MCP 工具调用 | P3 | 集成测试：MCP 客户端调用 + 响应格式断言 |\n| AC-8 混合搜索召回 | P3 | 对标测试：同一查询的召回率对比 |\n| AC-9 向后兼容 | P5 | 集成测试：旧 graph.json query 无退化 |\n| AC-10 社区检测连贯性 | P5 | 人工审查：社区划分与功能模块对比 |\n\n### 8.4 持续集成\n\n- 所有单元测试在 CI 中每次提交自动执行。\n- 集成测试在 PR 合并前执行。\n- 性能基准在里程碑完成时执行，记录趋势。\n\n---\n\n## 9. 风险与应对\n\n| 风险 | 影响 | 概率 | 应对 |\n|------|------|------|------|\n| 跨文件解析的语言复杂度超预期 | P1 延期 | 中 | P0 原型阶段提前暴露难点；按语言优先级降序实现（TS > Python > Go > Java > Rust > JS） |\n| 增量更新后图谱出现悬空边 | 数据完整性 | 中 | 图健康检查（T1.11）覆盖新增边类型；`--update` 完成后自动执行诊断并报告 |\n| graph.json 体积膨胀超 NFR-3 限制 | 存储压力 | 低 | BM25 索引独立侧车；Resolution 边按需存储（仅 EXTRACTED 边入主图，AMBIGUOUS 边入侧车） |\n| MCP 工具响应延迟影响 agent 体验 | 用户体验 | 中 | 影响分析结果缓存；深度限制（默认最大深度 5 层，可配置） |\n| 框架检测规则误报 | 入口点评分失准 | 低 | 规则可配置；误报案例在验证阶段收集并修正 |\n| 旧 graph.json 升级路径不清晰 | 向后兼容 | 低 | NFR-4 保证旧图 query 不退化；新功能在无 Resolution 边时静默降级 |\n\n---\n\n## 10. 依赖与前提\n\n| 依赖项 | 说明 | 状态 |\n|--------|------|------|\n| graphify 现有 AST 提取（Part A） | Resolution 阶段在其输出基础上工作 | 已就绪 |\n| graphify 现有社区检测（cluster） | process detection 需要社区信息作为评分输入 | 已就绪 |\n| graphify 现有 MCP server（--mcp） | 新工具注册到现有 server | 已就绪 |\n| graphify 现有嵌入索引（build_embeddings） | 混合搜索复用现有向量索引 | 已就绪 |\n| NetworkX 图结构 | Resolution 边直接添加到现有 NetworkX 图 | 已就绪 |\n| Tree-sitter Python 绑定 | 如需替换现有 AST 提取为 Tree-sitter（待 P0 评估） | 待确认 |\n\n---\n\n## 附录：阶段与 FR 映射\n\n| 阶段 | 覆盖 FR | 覆盖 NFR | 覆盖 AC |\n|------|---------|----------|---------|\n| P0 | — | — | 原型验证（无正式 AC） |\n| P1 | FR-1, FR-2 | NFR-4, NFR-5, NFR-6 | AC-1, AC-2, AC-3 |\n| P2 | FR-3, FR-5 | NFR-2 | AC-4, AC-6 |\n| P3 | FR-4, FR-6, FR-7 | — | AC-5, AC-7, AC-8 |\n| P4 | FR-8 | — | — |\n| P5 | — | NFR-1, NFR-2, NFR-3 | AC-9, AC-10 |\n",
+    "confidence_adjustment": null
+  },
+  "consensus_score": 1.0,
+  "stability_score": 1.0,
+  "stability_degraded": false,
+  "gate1_reason": "哨兵置信度 0.82 < 0.9",
+  "gate2_reason": "加权置信度 0.77 < 0.8 (severity=major, 加权置信度=0.77)",
+  "early_stopped": false,
+  "meta_verdict": {
+    "severity": "major",
+    "confidence": 0.7135,
+    "reasoning": "元审查最终裁决：原始审查报告(pass=False, major, 0.8367)方向正确。但存在系统性重复计数（22+条→约14-15条独立发现）和同一问题severity标注不一致。建议-0.07校准至0.77。去重后仍有约8条major findings证据链完整，pass=False和overall severity=major均维持。\n---\n经元审查辩论最终裁决。原始审查报告整体可信：4 项核心 major 发现证据确凿。但原始置信度 0.8367 偏高：3 处推理链断裂（sidecar一致性、--update崩溃恢复、MCP资源限制从实现细节跳跃到major设计缺陷）、2 处隐含假设未验证（Tree-sitter条件依赖被当作关键路径、AC-10人工审查被假定需要专用任务）、4 组重复finding未去重。最终 confidence_adjustment = -0.18，将原始 0.8367 调整至 0.657。",
+    "findings": [],
+    "satisfied": false,
+    "escalate_to_human": false,
+    "calibrated_confidence": null,
+    "original_content": "# 原始被审查内容\n# 执行计划：在 graphify 图谱基础上对标 GitNexus 补齐能力\n\n| 字段 | 值 |\n|------|-----|\n| 文档版本 | v1.0 |\n| 创建日期 | 2026-09-14 |\n| 关联规格 | spec.md v1.0 |\n| 状态 | 草案 |\n\n---\n\n## 1. 计划概述\n\n本计划将 spec.md 定义的功能需求拆解为 6 个阶段（P0–P5），按依赖关系串行推进，\n阶段内任务尽量并行。核心路径为：AST 符号增强 → 跨文件解析 → 执行流与增量更新 →\n查询分析工具 → 对标特性补齐 → 性能验证。\n\n每个阶段交付可验证的中间产物，避免到最后才集成。阶段间的依赖关系：\n\n```\nP0 (原型验证) → P1 (符号级图模型) → P2 (增量更新引擎) → P3 (查询与分析)\n                                                          ↓\n                                        P4 (对标特性) → P5 (性能与集成)\n```\n\nP4 依赖 P3 的 MCP 工具框架（框架检测结果需通过 context 工具暴露），但 P4 的 AST\n检测规则开发可与 P3 后半段并行。\n\n---\n\n## 2. P0：原型验证（2 周）\n\n### 2.1 目标\n\n验证跨文件调用解析的技术可行性，以 TypeScript 为试点语言，在 graphify 现有 AST\n提取（Part A）之后增加一个 Resolution 原型阶段。\n\n### 2.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T0.1 | 选定测试仓库：3 个 TypeScript 开源项目（~100–300 文件），覆盖不同框架 | 无 | 测试仓库集合 + 选型记录 |\n| T0.2 | 分析 graphify AST 提取输出的节点/边结构，确定 CALLS 边的接入点 | 无 | AST 输出结构分析文档 |\n| T0.3 | 实现 TypeScript 导入解析器原型：解析 `import { X } from 'path'`、`import Y from 'path'`、`import * as Z from 'path'` | T0.2 | `ts_import_resolver.py` 原型 |\n| T0.4 | 实现 TypeScript 调用解析器原型：沿 AST 调用节点 + 导入表，生成 CALLS 边 | T0.3 | `ts_call_resolver.py` 原型 |\n| T0.5 | 将 Resolution 原型接入 Part A → Part C 合并流程，生成含 CALLS 边的 graph.json | T0.4 | 原型端到端流程 |\n| T0.6 | 验证：对测试仓库手动检查 CALLS 边的准确性，记录误解析/漏解析案例 | T0.5 | 验证报告 |\n\n### 2.3 退出标准\n\n- TypeScript 测试仓库的 CALLS 边准确率（人工抽样）≥ 80%。\n- 导入解析覆盖 named/default/wildcard 三种形式。\n- 原型流程不破坏现有 Part A → Part C 合并逻辑。\n\n---\n\n## 3. P1：符号级图模型（4 周）\n\n### 3.1 目标\n\n将 P0 原型扩展为完整的符号级图模型，实现 FR-1（符号提取增强）和 FR-2（跨文件\n调用与引用边解析），覆盖 6 种语言。\n\n### 3.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T1.1 | 扩展 AST 提取的符号类型：函数、方法、类、接口、类型别名、变量声明、模块 | P0 完成 | 增强后的 `extract()` 输出 |\n| T1.2 | 为符号节点增加限定名（qualified name）字段，支持跨文件符号去重 | T1.1 | 符号节点 schema 更新 |\n| T1.3 | 实现语言解析器注册机制：`LanguageResolver` 接口 + 每语言实现 | T1.1 | `resolver_registry.py` |\n| T1.4 | TypeScript 解析器：导入解析 + 调用解析 + 类继承 + DEFINES 边 | T1.3 | `ts_resolver.py` |\n| T1.5 | JavaScript 解析器：复用 TypeScript 解析器，处理 CommonJS/ESM 差异 | T1.4 | `js_resolver.py` |\n| T1.6 | Python 解析器：`import`/`from...import` 解析 + 调用解析 + 类继承 | T1.3 | `python_resolver.py` |\n| T1.7 | Go 解析器：`import` 解析 + 调用解析 + struct 嵌入（Go 继承机制） | T1.3 | `go_resolver.py` |\n| T1.8 | Java 解析器：`import` 解析 + 调用解析 + extends/implements | T1.3 | `java_resolver.py` |\n| T1.9 | Rust 解析器：`use` 解析 + 调用解析 + trait 实现 | T1.3 | `rust_resolver.py` |\n| T1.10 | 更新 Part C 合并逻辑：合并 AST 节点 + Resolution 边 | T1.4–T1.9 | 增强后的合并流程 |\n| T1.11 | 更新图健康检查（diagnose_extraction）：覆盖 CALLS/IMPORTS/HERITAGE 边的悬空端点检测 | T1.10 | 增强后的诊断 |\n| T1.12 | 新增边类型标注为 EXTRACTED，未解析的调用标注为 AMBIGUOUS | T1.10 | 边来源标注 |\n\n### 3.3 依赖说明\n\n- T1.4–T1.9（6 种语言解析器）可并行开发，共享 T1.3 定义的 `LanguageResolver`\n  接口。\n- T1.10 和 T1.11 依赖全部解析器完成。\n\n### 3.4 交付物\n\n- 6 种语言的符号提取与 Resolution 阶段，集成到 graphify 主流程。\n- 更新后的 `.graph/graph.json` 包含 CALLS/IMPORTS/HERITAGE/DEFINES 边。\n- 图健康检查覆盖新增边类型。\n\n### 3.5 退出标准\n\n- 满足 AC-1（符号提取覆盖）和 AC-2/AC-3（调用边与导入边正确性）。\n- 6 种语言各自的测试仓库通过 Resolution 阶段，无崩溃。\n\n---\n\n## 4. P2：增量更新引擎（3 周）\n\n### 4.1 目标\n\n实现 FR-3（执行流追踪）和 FR-5（git-diff 影响映射），增强增量更新引擎的代码\n分析能力。\n\n### 4.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T2.1 | 设计入口点评分启发式：函数名模式（`main`/`handle`/`test_*`）、框架标记（依赖 P4 但可先用硬编码）、调用入度/出度 | P1 完成 | 入口点评分算法 |\n| T2.2 | 实现调用链追踪：沿 CALLS 边从入口点 BFS，构建 process 节点 | T2.1 | `process_detector.py` |\n| T2.3 | process 节点 schema：入口点符号、调用步骤列表、覆盖符号集合 | T2.2 | process 节点定义 |\n| T2.4 | 集成到 Step 4 构建流程：cluster → process detection → 输出 | T2.3 | 完整构建流程 |\n| T2.5 | 实现 git-diff 解析：文件级 + 行级 diff → 映射到符号节点 | P1 完成 | `diff_parser.py` |\n| T2.6 | 实现影响传播：从变更符号出发，沿 CALLS/HERITAGE 边传播到受影响 process | T2.5, T2.2 | `impact_mapper.py` |\n| T2.7 | 集成到 `--update` 流程：`--update` 触发重新提取后，自动执行影响映射报告 | T2.6 | 增强后的 `--update` |\n| T2.8 | 更新 manifest 机制：manifest 记录符号级哈希（非仅文件级），支持符号粒度增量 | T2.5 | 增强后的 manifest |\n\n### 4.3 交付物\n\n- 执行流追踪能力（process 节点）集成到图谱构建流程。\n- git-diff 影响映射工具，可作为独立命令或 MCP 工具调用。\n- 增强后的 `--update` 流程。\n\n### 4.4 退出标准\n\n- 满足 AC-4（执行流覆盖完整调用链）和 AC-6（git-diff 影响映射正确）。\n- 增量更新后，process 节点正确反映变更后的调用链。\n\n---\n\n## 5. P3：查询与分析能力（4 周）\n\n### 5.1 目标\n\n实现 FR-4（影响分析）、FR-6（MCP 工具扩展）和 FR-7（混合搜索），补齐查询层能力。\n\n### 5.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T3.1 | 实现影响分析核心：给定符号 ID，沿 CALLS 边双向遍历，按深度分组 | P1 完成 | `impact_analyzer.py` |\n| T3.2 | 实现置信度评分：EXTRACTED 边 → 90%、INFERRED 边 → 60%、AMBIGUOUS 边 → 30% | T3.1 | 置信度评分模块 |\n| T3.3 | 实现 trace 工具：两个符号间的最短有向调用路径（BFS on CALLS edges） | P1 完成 | `trace.py` |\n| T3.4 | 实现 context 工具：给定符号，聚合调用者、被调用者、社区归属、参与 process | P2 完成 | `context.py` |\n| T3.5 | 扩展 MCP server：注册 context/impact/trace/detect_changes 工具 | T3.1–T3.4, T2.6 | 增强后的 MCP server |\n| T3.6 | 实现 BM25 倒排索引：索引符号名、限定名、文件路径、文档注释 | P1 完成 | `bm25_index.py` |\n| T3.7 | 实现 RRF 融合：BM25 排名 + 语义向量排名 → RRF（K=60）融合结果 | T3.6 | `hybrid_search.py` |\n| T3.8 | 集成到 query 工具：query 命令优先使用混合搜索，回退到 BFS/DFS | T3.7 | 增强后的 query |\n| T3.9 | 更新嵌入索引：BM25 索引作为独立侧车（`.graph/bm25_index.json`），不膨胀 graph.json | T3.6 | 索引侧车文件 |\n\n### 5.3 交付物\n\n- 影响分析、trace、context 三个分析工具。\n- MCP 工具集扩展至 7 个工具（query/path/explain + context/impact/trace/detect_changes）。\n- BM25 + RRF 混合搜索引擎。\n\n### 5.4 退出标准\n\n- 满足 AC-5（影响分析深度分组）、AC-7（MCP 工具可调用）、AC-8（混合搜索优于纯向量）。\n- 现有 query/path/explain 行为不退化。\n\n---\n\n## 6. P4：GitNexus 对标特性（2 周）\n\n### 6.1 目标\n\n实现 FR-8（框架检测与入口点配置），完善入口点识别能力，使执行流追踪的入口点\n质量接近 GitNexus 水平。\n\n### 6.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T4.1 | 定义框架检测规则 schema：AST 节点模式 → 框架标签 + 入口点权重 | P1 完成 | 规则 schema |\n| T4.2 | 实现框架检测引擎：AST 模式匹配，标记符号节点 | T4.1 | `framework_detector.py` |\n| T4.3 | 编写框架规则集：Express、FastAPI、Spring、React、Gin、Actix | T4.1 | 6 个框架规则文件 |\n| T4.4 | 集成到入口点评分（T2.1）：框架标记作为评分输入信号 | T4.2, P2 完成 | 增强后的入口点评分 |\n| T4.5 | 框架标签通过 context MCP 工具暴露 | T3.5, T4.2 | context 工具增强 |\n| T4.6 | 验证：对使用已知框架的测试仓库，检查入口点识别覆盖率 | T4.4 | 验证报告 |\n\n### 6.3 交付物\n\n- 框架检测引擎 + 6 个框架规则集。\n- 增强后的入口点评分（融合框架信号）。\n- 框架标签在 context 工具中可见。\n\n### 6.4 退出标准\n\n- 6 个框架的测试仓库中，入口点识别覆盖率 ≥ 70%。\n- 框架规则可通过配置文件扩展，无需修改核心代码。\n\n---\n\n## 7. P5：性能与集成（2 周）\n\n### 7.1 目标\n\n验证 NFR-1/2/3（性能、增量更新耗时、存储占用），优化瓶颈，完成文档与示例。\n\n### 7.2 任务分解\n\n| 任务 | 描述 | 依赖 | 交付物 |\n|------|------|------|--------|\n| T5.1 | 性能基准：对 500/2000/5000 文件仓库执行全量索引，记录各阶段耗时 | P1–P4 完成 | 性能基准报告 |\n| T5.2 | 优化 Resolution 阶段：并行化语言解析器调用，减少串行等待 | T5.1 | 性能优化补丁 |\n| T5.3 | 增量更新基准：对 5000 文件仓库执行单文件变更的 `--update`，记录耗时 | T5.1 | 增量更新基准 |\n| T5.4 | 存储基准：测量 graph.json + BM25 索引 + 嵌入索引的总体积 | T5.1 | 存储报告 |\n| T5.5 | 向后兼容验证：对不含 Resolution 边的旧 graph.json 执行 query，确认无退化 | P3 完成 | 兼容性报告 |\n| T5.6 | 更新 SKILL.md：增加 Resolution 阶段说明、新 MCP 工具文档 | 全部完成 | SKILL.md 更新 |\n| T5.7 | 编写示例：3 个使用场景（影响分析、执行流追踪、变更检测）的端到端示例 | 全部完成 | 示例文档 |\n\n### 7.3 退出标准\n\n- NFR-1：500 文件仓库全量索引 ≤ 60 秒。\n- NFR-3：graph.json 体积增长 ≤ 3 倍。\n- NFR-4：旧 graph.json 的 query 行为无退化。\n- AC-9（向后兼容）通过。\n- AC-10（社区检测语义连贯性）通过人工审查。\n\n---\n\n## 8. 测试与验收策略\n\n### 8.1 测试分层\n\n| 层级 | 范围 | 方法 | 自动化 |\n|------|------|------|--------|\n| 单元测试 | 每个解析器、分析器、索引器的独立逻辑 | pytest + MockLLM（零真实 API） | 全自动 |\n| 集成测试 | AST 提取 → Resolution → 合并 → 构建端到端 | 真实测试仓库样本 | 半自动（CI 触发） |\n| 对标测试 | 与 GitNexus 对同一仓库的输出对比 | 手动执行 GitNexus + 结果对比 | 手动 |\n| 性能测试 | 各阶段耗时与存储占用 | 基准脚本 + 仓库规模矩阵 | 半自动 |\n\n### 8.2 测试仓库\n\n准备 3 组测试仓库样本：\n\n1. **小型仓库**（~50 文件）：单语言，覆盖所有符号类型与边类型，用于单元测试。\n2. **中型仓库**（~500 文件）：多语言混合，含框架使用，用于集成测试与性能基准。\n3. **大型仓库**（~5000 文件）：真实开源项目，用于性能验证与对标测试。\n\n### 8.3 验收标准映射\n\n| 验收标准 | 验证阶段 | 验证方法 |\n|----------|----------|----------|\n| AC-1 符号提取覆盖 | P1 | 单元测试：每种语言的固定样本仓库 |\n| AC-2 调用边正确 | P1 | 集成测试：已知调用关系的断言 |\n| AC-3 导入边正确 | P1 | 单元测试：named/default/wildcard import 测试样本 |\n| AC-4 执行流覆盖 | P2 | 集成测试：入口点到终端调用的路径断言 |\n| AC-5 影响分析深度 | P3 | 单元测试：已知依赖结构的深度分组断言 |\n| AC-6 git-diff 映射 | P2 | 集成测试：模拟 diff → 受影响符号断言 |\n| AC-7 MCP 工具调用 | P3 | 集成测试：MCP 客户端调用 + 响应格式断言 |\n| AC-8 混合搜索召回 | P3 | 对标测试：同一查询的召回率对比 |\n| AC-9 向后兼容 | P5 | 集成测试：旧 graph.json query 无退化 |\n| AC-10 社区检测连贯性 | P5 | 人工审查：社区划分与功能模块对比 |\n\n### 8.4 持续集成\n\n- 所有单元测试在 CI 中每次提交自动执行。\n- 集成测试在 PR 合并前执行。\n- 性能基准在里程碑完成时执行，记录趋势。\n\n---\n\n## 9. 风险与应对\n\n| 风险 | 影响 | 概率 | 应对 |\n|------|------|------|------|\n| 跨文件解析的语言复杂度超预期 | P1 延期 | 中 | P0 原型阶段提前暴露难点；按语言优先级降序实现（TS > Python > Go > Java > Rust > JS） |\n| 增量更新后图谱出现悬空边 | 数据完整性 | 中 | 图健康检查（T1.11）覆盖新增边类型；`--update` 完成后自动执行诊断并报告 |\n| graph.json 体积膨胀超 NFR-3 限制 | 存储压力 | 低 | BM25 索引独立侧车；Resolution 边按需存储（仅 EXTRACTED 边入主图，AMBIGUOUS 边入侧车） |\n| MCP 工具响应延迟影响 agent 体验 | 用户体验 | 中 | 影响分析结果缓存；深度限制（默认最大深度 5 层，可配置） |\n| 框架检测规则误报 | 入口点评分失准 | 低 | 规则可配置；误报案例在验证阶段收集并修正 |\n| 旧 graph.json 升级路径不清晰 | 向后兼容 | 低 | NFR-4 保证旧图 query 不退化；新功能在无 Resolution 边时静默降级 |\n\n---\n\n## 10. 依赖与前提\n\n| 依赖项 | 说明 | 状态 |\n|--------|------|------|\n| graphify 现有 AST 提取（Part A） | Resolution 阶段在其输出基础上工作 | 已就绪 |\n| graphify 现有社区检测（cluster） | process detection 需要社区信息作为评分输入 | 已就绪 |\n| graphify 现有 MCP server（--mcp） | 新工具注册到现有 server | 已就绪 |\n| graphify 现有嵌入索引（build_embeddings） | 混合搜索复用现有向量索引 | 已就绪 |\n| NetworkX 图结构 | Resolution 边直接添加到现有 NetworkX 图 | 已就绪 |\n| Tree-sitter Python 绑定 | 如需替换现有 AST 提取为 Tree-sitter（待 P0 评估） | 待确认 |\n\n---\n\n## 附录：阶段与 FR 映射\n\n| 阶段 | 覆盖 FR | 覆盖 NFR | 覆盖 AC |\n|------|---------|----------|---------|\n| P0 | — | — | 原型验证（无正式 AC） |\n| P1 | FR-1, FR-2 | NFR-4, NFR-5, NFR-6 | AC-1, AC-2, AC-3 |\n| P2 | FR-3, FR-5 | NFR-2 | AC-4, AC-6 |\n| P3 | FR-4, FR-6, FR-7 | — | AC-5, AC-7, AC-8 |\n| P4 | FR-8 | — | — |\n| P5 | — | NFR-1, NFR-2, NFR-3 | AC-9, AC-10 |\n\n\n# 审查报告(Verdict)\n整体严重程度: major\n置信度: 0.8367\n通过: False\n推理: 经 2 轮辩论后独立复核全部证据。4 项 major 规格缺陷均成立且未被有效挑战驳回。辩论中 design-reviewer 对 INFERRED 边的纠正被接受，并据此新增 1 项 finding。与 design-reviewer 在 BFS 环检测和 Tree-sitter 评估缺失上形成跨视角共识。\n---\n本计划是一份执行计划文档，不包含实际部署配置，因此审查聚焦于计划是否为后续可部署、可运维、可复现的实现预留了足够的操作约束。向 design-reviewer 让步 CI 工具链选择一条。维持 4 项 major 发现。\n---\n独立审查 plan.md 全文及 2 轮辩论记录后，确认设计在结构上完整，但在 4 个维度存在实质性设计缺陷，足以导致实施阶段返工或质量不可控。\n\n发现列表:\n  - [major] NFR 验收标准与阶段退出标准系统性脱节：P1 退出标准无 NFR-4/5/6 验证条件，P2 退出标准无 NFR-2 验证条件。NFR 被声明为已覆盖但从未在退出标准中被验证。 (置信度:0.9)\n    依据: 附录将 NFR-4/5/6 归入 P1、NFR-2 归入 P2 和 P5，但各阶段退出标准均未包含对应 NFR 验证条件。\n    建议: 在每个阶段退出标准中显式列出该阶段映射表声称覆盖的 NFR 及其验证方法。\n  - [major] AC-10 在 P5 退出标准中声称通过但 P5 任务列表无对应验证任务。T1.10 改变了社区检测依赖的图结构但无验证。 (置信度:0.87)\n    依据: P5 退出标准列出 AC-10 通过人工审查，但 P5 任务列表无对应任务。\n    建议: 在 P5 增加 AC-10 验证任务。\n  - [major] 新增 4 个 MCP 工具接口契约未定义（输入参数 schema、输出格式、错误码）。 (置信度:0.85)\n    依据: T3.5 注册 context/impact/trace/detect_changes 四工具但无接口契约定义任务。AC-7 仅验证'可调用'。\n    建议: 在 P3 增加任务：定义 4 个新 MCP 工具的接口契约文档。\n  - [major] P4（FR-8 框架检测）无正式验收标准编号。FR→AC 可追溯性断裂。 (置信度:0.85)\n    依据: 附录 P4 行 AC 列为空。8.3 节 AC-1 到 AC-10 无一条对应 FR-8。\n    建议: 补充 AC-11 映射到 P4。\n  - [minor] T2.1 依赖标注自相矛盾：描述列声称依赖 P4 但依赖列标注 P1 完成。深层反映 P2↔P4 循环依赖。 (置信度:0.9)\n    依据: T2.1 描述列与依赖列不一致。T4.4 依赖 P2 完成，形成循环。\n    建议: 修正 T2.1 依赖列，增加 P2 返工风险条目。\n  - [minor] T5.1 性能基准未定义硬件配置、OS、Python 版本。NFR-1 可测试性依赖于未指定的运行环境。 (置信度:0.85)\n    依据: T5.1 无环境定义。NFR-1 ≤60 秒阈值无环境约束。\n    建议: 在 T5.1 增加环境规格定义。\n  - [minor] T2.2 BFS 调用链追踪未定义环检测边界条件。递归调用形成环会导致无限循环。 (置信度:0.8)\n    依据: T2.2 沿 CALLS 边 BFS 但无环检测描述。\n    建议: T2.2 增加 BFS 环检测设计。\n  - [minor] Tree-sitter 依赖状态待确认但 P0 无评估任务。FR-1 可实现性悬空。 (置信度:0.78)\n    依据: Tree-sitter 待确认但 P0 任务无评估。\n    建议: 在 P0 增加 Tree-sitter 评估任务。\n  - [minor] T3.2 置信度评分引用 INFERRED 边类型但 T1.12 仅定义 EXTRACTED 和 AMBIGUOUS。INFERRED 边无创建机制。 (置信度:0.82)\n    依据: T3.2 引用 INFERRED 边 60% 置信度，但 T1.12 仅定义两种边标注。\n    建议: 增加 INFERRED 边创建任务或修正 T3.2 移除 INFERRED 评分项。\n  - [major] 测试仓库来源与 CI 可复现性缺失：T0.1/T5.1 选定测试仓库但未说明来源、版本固定、许可证合规性、CI 获取策略。 (置信度:0.8)\n    依据: T0.1 交付物无 repo URL/commit pin/fixture 固化策略。\n    建议: T0.1 增加交付物：测试仓库清单 + fixture 固化策略。\n  - [major] 存储 sidecar 一致性与原子写入设计缺失：.graph/bm25_index.json 与 graph.json 可能漂移。 (置信度:0.78)\n    依据: T3.9 无原子写入策略、无一致性版本号、无 stale 检测重建路径。\n    建议: T3.9 增加：temp-file + atomic rename + 一致性版本号。\n  - [major] --update 崩溃恢复与事务安全性未设计：manifest 无回滚路径。 (置信度:0.72)\n    依据: T2.7/T2.8 无 write-ahead/staging-area，中途失败无回滚。\n    建议: T2.7/T2.8 增加：write-ahead 或 staging-area 模式。\n  - [major] MCP 工具运行时资源限制未定义：仅 impact 设深度上限，其余 3 工具无 timeout/内存/并发上限。 (置信度:0.7)\n    依据: T3.5 仅 impact 有深度限制，trace/context/detect_changes 无资源边界。\n    建议: T3.5 为每个 MCP 工具定义 timeout、响应大小上限、并发上限。\n  - [minor] Tree-sitter 依赖可部署性未提前确认（支持 DR-3）。 (置信度:0.68)\n    依据: Tree-sitter 跨平台二进制可用性需提前确认。\n    建议: 支持 DR-3 的 T0.0 评估任务建议。\n  - [minor] 性能基准环境规格缺失：T5.1/T5.3 无硬件基线与运行环境定义。 (置信度:0.62)\n    依据: NFR-1/2 在不同硬件下不可比。\n    建议: T5.1 增加基准硬件配置定义。\n  - [minor] CI 工具链选择属实现期决策（向 design-reviewer 让步）。 (置信度:0.85)\n    依据: §8.4 已声明 CI 策略，工具链选择是实现期决策。\n    建议: 无（让步）。\n  - [major] 技术选型缺乏对比依据——BM25+RRF(K=60)、置信度 90%/60%/30%、入口点评分启发式均直接给出结论 (置信度:0.88)\n    依据: T3.6/T3.7 选定 BM25+RRF 未提供与替代方案对比；T3.2 置信度无推导依据；T2.1 入口点评分无权重选择依据。\n    建议: 在 P3 启动前增加选型依据小节，论证选择理由。\n  - [major] 边界与异常设计缺失——调用环检测、动态分发处理、AMBIGUOUS 触发条件均未设计 (置信度:0.84)\n    依据: T2.2 BFS 未提及环检测；T1.4-T1.9 未定义动态分发处理；T1.12 AMBIGUOUS 触发条件未列举。\n    建议: T2.2/T3.3 增加 visited-set 环检测；T1.3 定义动态分发标记策略；T1.12 明确 AMBIGUOUS 触发条件清单。\n  - [major] Tree-sitter 关键依赖待确认但 P0 无评估任务 (置信度:0.9)\n    依据: 第10节 Tree-sitter 待确认但 P0 任务无评估。若需替换整个 P1 方案前提不成立。\n    建议: 在 P0 增加 T0.0 任务：评估现有 AST 提取能力，如不足评估 Tree-sitter 替换成本。\n  - [major] MCP 工具接口契约不完整——4 个新工具无参数 schema、输出格式、错误码定义 (置信度:0.82)\n    依据: T3.5 仅声明工具名，未定义接口契约。AC-7 仅验证'可调用'未覆盖响应格式。\n    建议: 在 T3.5 增加每个 MCP 工具的接口契约定义。\n  - [minor] P0 退出标准 CALLS 边准确率 80% 偏低，错误边会沿 P2→P3 传播放大 (置信度:0.78)\n    依据: P0 退出标准 80%。20% 错误 CALLS 边进入 P2/P3 导致结果失真。\n    建议: 将 P0 退出标准提高到 ≥ 90%。\n  - [minor] 语言优先级与并行开发假设矛盾 (置信度:0.76)\n    依据: 风险表暗示串行但 T1.4-T1.9 声明可并行。JS 排最后但复用 TS。\n    建议: 明确语言优先级含义，修正 JS 位置。\n  - [minor] P2/P4 框架检测循环依赖——P2 硬编码框架标记，P4 替换，P2 退出标准未标注临时性 (置信度:0.78)\n    依据: T2.1 硬编码框架标记，T4.4 替换。P2 退出标准 AC-4 未标注为临时验证。\n    建议: 在 P2 退出标准标注 AC-4 为临时验证；P4 增加 AC-4 回归验证。\n  - [minor] 依赖锁定策略缺失影响 NFR-5 确定性 (置信度:0.72)\n    依据: 第10节依赖表未提及版本锁定。不同环境行为可能不一致。\n    建议: 在 P0 或 P1 早期增加依赖锁定任务。\n\n# 你的任务\n作为元审查者,请判断上述审查报告是否可信。输出 confidence_adjustment (-1.0 ~ +1.0) 表示对原始置信度的调整建议。",
+    "confidence_adjustment": -0.125
+  },
+  "meta_individual": {
+    "meta-reviewer": {
+      "severity": "major",
+      "confidence": 0.82,
+      "reasoning": "元审查对照原始 plan.md 全文逐条验证了审查报告的 findings。核心判断：审查报告的 4 项原始 major 发现证据确凿、severity 匹配，整体裁决正确。但审查报告存在三类质量问题：重复发现、实现层细节升格为 major、漏判。综合判断：核心发现可信但置信度偏高。",
+      "findings": [
+        {
+          "description": "过判-重复发现：Tree-sitter P0 评估缺失出现两次，分别为 minor(0.78) 和 major(0.9)。同一问题两种 severity 两种 confidence，内部矛盾。",
+          "severity": "major",
+          "confidence": 0.95,
+          "evidence": "Finding #8 与 #19 指向完全相同的问题但 severity 和 confidence 均不同。",
+          "suggestion": "合并为单条 finding，统一 severity 和 confidence。"
+        },
+        {
+          "description": "过判-重复发现：MCP 工具接口契约缺失出现两次（#3 和 #20）。",
+          "severity": "major",
+          "confidence": 0.93,
+          "evidence": "两条 finding 的 evidence 和 suggestion 几乎完全相同。",
+          "suggestion": "合并为单条 finding。"
+        },
+        {
+          "description": "过判-重复发现：性能基准环境规格缺失出现两次（#6 和 #15），confidence 差异显著（0.85 vs 0.62）。",
+          "severity": "minor",
+          "confidence": 0.92,
+          "evidence": "同一问题两种 confidence 差异达 0.23。",
+          "suggestion": "合并为单条 finding。"
+        },
+        {
+          "description": "过判-实现层细节升格为 major：原子写入策略、崩溃恢复、MCP 资源限制在计划文档层面属实现期决策。",
+          "severity": "minor",
+          "confidence": 0.78,
+          "evidence": "这些是实现机制而非计划架构决策。#13 忽略了风险表§9 已部分覆盖。",
+          "suggestion": "降级为 minor。"
+        },
+        {
+          "description": "漏判-并发写入安全：T1.4-T1.9 声称可并行开发但所有解析器的 Resolution 边直接添加到同一 NetworkX 图。",
+          "severity": "minor",
+          "confidence": 0.75,
+          "evidence": "并行写入同一图对象存在竞态条件。",
+          "suggestion": "在 T1.3 明确各语言解析器输出独立边集合，由 T1.10 统一合并。"
+        },
+        {
+          "description": "漏判-符号级哈希性能开销：T2.8 manifest 记录符号级哈希，每次 --update 需重计算所有符号哈希。",
+          "severity": "minor",
+          "confidence": 0.72,
+          "evidence": "5000 文件 × 每文件数十符号的哈希重计算可能使增量更新耗时超阈值。",
+          "suggestion": "在 T2.8 增加符号级哈希增量计算策略。"
+        },
+        {
+          "description": "置信度失准-内部矛盾：重复发现的 confidence 差异显著（0.78 vs 0.9、0.85 vs 0.62）。",
+          "severity": "minor",
+          "confidence": 0.88,
+          "evidence": "说明审查合成阶段未对相同发现的 confidence 进行归一化。",
+          "suggestion": "合成阶段增加去重步骤。"
+        },
+        {
+          "description": "推理缺口-Finding #13 未承认风险表部分覆盖。",
+          "severity": "minor",
+          "confidence": 0.8,
+          "evidence": "风险表§9 提到'影响分析结果缓存；深度限制默认5层可配置'。Finding #13 未引用此条目。",
+          "suggestion": "修正 Finding #13 evidence，降为 minor。"
+        }
+      ],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": -0.15
+    },
+    "meta-reviewer-2": {
+      "severity": "minor",
+      "confidence": 0.82,
+      "reasoning": "独立复核审查报告全部 findings 及其 evidence→severity 推理链。审查报告方向性正确但存在三类系统性质量问题：重复计数、BFS 环检测技术性推理错误、隐含假设未验证。原始置信度 0.8367 因重复计数和技术错误被高估，建议下调。",
+      "findings": [
+        {
+          "description": "审查报告存在 5 组重复 finding，24 项 listing 实际仅约 16 项独立发现。重复计数人为抬高整体严重程度和 finding 数量。",
+          "severity": "minor",
+          "confidence": 0.92,
+          "evidence": "Tree-sitter 评估缺失出现 3 次（minor 0.78 → minor 0.68 → major 0.9）；MCP 接口契约出现 2 次；性能基准环境出现 2 次；BFS 环检测出现 2 次；T2.1 依赖矛盾出现 2 次。",
+          "suggestion": "合并重复 finding，保留最高 severity 版本或取共识 severity。"
+        },
+        {
+          "description": "BFS 环检测 finding 的 evidence→severity 推理链断裂。BFS 算法天然使用 visited-set 防止循环，不会因图中存在环而无限循环。",
+          "severity": "minor",
+          "confidence": 0.88,
+          "evidence": "审查报告以'无限循环'风险作为 major severity 支撑，但 BFS 算法本身不存在此风险。",
+          "suggestion": "降级为 minor（设计文档完整性问题，非运行时风险）。"
+        },
+        {
+          "description": "NFR 验收标准脱节 finding 的隐含假设未验证。NFR-2 同时映射到 P2 和 P5，P5 有显式性能基准任务，但 finding 假设'映射到 P2 即须在 P2 退出标准验证'。",
+          "severity": "minor",
+          "confidence": 0.75,
+          "evidence": "NFR-2 有 P5 验证路径，finding 将 NFR-4/5/6（确实无后续验证）与 NFR-2 混为一谈。",
+          "suggestion": "将 finding 范围收窄至 NFR-4/5/6，NFR-2 单独评估。"
+        },
+        {
+          "description": "技术选型缺乏对比依据 finding 将业界标准参数（RRF K=60 是 Cormack et al. 2009 论文标准值）作为'未论证选择'批评。",
+          "severity": "minor",
+          "confidence": 0.72,
+          "evidence": "BM25+RRF(K=60) 是混合搜索的教科书级方案。审查报告假设'计划未提供对比 = 选择无依据'但未验证是否为业界标准。",
+          "suggestion": "将 BM25+RRF 部分从 finding 中移除或降级，保留置信度评分和入口点评分确实缺乏推导的部分。"
+        },
+        {
+          "description": "Sidecar 一致性 finding 假设并发写入场景但计划未描述写入模式。",
+          "severity": "minor",
+          "confidence": 0.68,
+          "evidence": "若 sidecar 仅在全量构建时写入，则漂移风险不存在。",
+          "suggestion": "在 finding 中明确标注假设前提条件。"
+        },
+        {
+          "description": "多项 finding 对计划文档施加实现级设计细节要求，超出文档定位（状态: 草案）。",
+          "severity": "minor",
+          "confidence": 0.7,
+          "evidence": "--update 崩溃恢复、MCP timeout/内存上限、原子写入策略均为实现期设计决策。",
+          "suggestion": "将此类 finding 的 severity 统一降级为 minor。"
+        }
+      ],
+      "satisfied": true,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": -0.15
+    }
+  },
+  "meta_names": [
+    "meta-reviewer",
+    "meta-reviewer-2"
+  ],
+  "meta_positions": [
+    "[meta-reviewer 元审查辩论 - plan.md]\n\n部分同意 meta-reviewer-2：重复计数批评成立、BFS 推理措辞不精确、置信度需下调。不同意：核心 major findings 不因重复计数失效；BFS 环检测应保留为 minor finding 而非完全驳回；置信度下调幅度有限（-0.06）。建议校准至约 0.78。\n\n```json\n{\n  \"overall_severity\": \"major\",\n  \"confidence\": 0.78,\n  \"passed\": false,\n  \"reasoning\": \"审查报告方向正确，去重后核心major findings仍成立。但存在系统性重复计数（22条→约15条独立发现）和同一问题severity标注不一致。原始置信度0.8367因重复计数虚高，建议下调至约0.78。部分同意meta-reviewer-2的重复计数批评，但不同意将BFS环检测完全定性为技术性推理错误。\",\n  \"confidence_adjustment\": -0.06,\n  \"calibration_rationale\": \"原始置信度0.8367存在重复计数导致的系统性虚高：22条findings去重后约15条独立发现，重复率约30%。但去重后仍有6+条major findings证据链完整，支撑pass=False判定。建议下调0.06，校准至约0.78。\"\n}\n```\n",
+    "[meta-reviewer-2 元审查辩论 - plan.md]\n\n与第一元审查者在核心发现可信但置信度偏高上完全一致。补充具体的推理链断裂定位（3处）和隐含假设未验证（2处）。提出 confidence_adjustment = -0.18，将原始 0.8367 调整至约 0.657。\n\n```json\n{\n  \"overall_severity\": \"major\",\n  \"confidence\": 0.65,\n  \"passed\": false,\n  \"reasoning\": \"确认核心发现证据确凿、severity合理。但发现报告存在3处推理链断裂（sidecar一致性、--update崩溃恢复、MCP资源限制从计划未提及实现细节跳跃到major设计缺陷）、2处隐含假设未验证（Tree-sitter条件依赖被当作关键路径、AC-10人工审查被假定需要专用任务条目）、4组重复finding。建议confidence_adjustment = -0.18。\",\n  \"confidence_adjustment\": -0.18,\n  \"consensus_with_first_meta_reviewer\": \"与第一元审查者完全一致：核心发现可信但置信度偏高、存在实现细节升格为major的问题。补充分歧：第一元审查者建议下调0.06，我建议下调0.18——差异源于对实现细节升格严重程度的不同评估。\"\n}\n```\n"
+  ],
+  "meta_debate_rounds_done": 1,
+  "meta_final_verdicts": {
+    "meta-reviewer": {
+      "severity": "major",
+      "confidence": 0.77,
+      "reasoning": "元审查最终裁决：原始审查报告(pass=False, major, 0.8367)方向正确。但存在系统性重复计数（22+条→约14-15条独立发现）和同一问题severity标注不一致。建议-0.07校准至0.77。去重后仍有约8条major findings证据链完整，pass=False和overall severity=major均维持。",
+      "findings": [],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": -0.07
+    },
+    "meta-reviewer-2": {
+      "severity": "major",
+      "confidence": 0.657,
+      "reasoning": "经元审查辩论最终裁决。原始审查报告整体可信：4 项核心 major 发现证据确凿。但原始置信度 0.8367 偏高：3 处推理链断裂（sidecar一致性、--update崩溃恢复、MCP资源限制从实现细节跳跃到major设计缺陷）、2 处隐含假设未验证（Tree-sitter条件依赖被当作关键路径、AC-10人工审查被假定需要专用任务）、4 组重复finding未去重。最终 confidence_adjustment = -0.18，将原始 0.8367 调整至 0.657。",
+      "findings": [],
+      "satisfied": false,
+      "escalate_to_human": false,
+      "calibrated_confidence": null,
+      "original_content": null,
+      "confidence_adjustment": -0.18
+    }
+  },
+  "route_reason": "渐进式审查: 6121 tok → 哨兵单审 → 面板扩张; thorough 续跑 (加权置信度 0.77 < 0.8 (severity=major, 加权置信度=0.77))"
+}

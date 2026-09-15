@@ -227,9 +227,14 @@ def run_agent_review(
 def _emit_final(
     run_id: str, state, output_format: str, output_dir: Path | None
 ) -> None:
-    """Write verdict.json + report.md to the evidence directory; stdout carries
-    the driver manifest (``done: true`` — the judge-manager then reads the
-    artifacts to report)."""
+    """Write verdict.json + report.md to the evidence directory.
+
+    stdout carries the driver manifest (``done: true``). stderr carries a
+    human-scannable summary pointing to the artifacts:
+    - Agent 修复: 读原文件 + verdict.json
+    - 人工修复: 读原文件 + report.md
+    - 推导过程(用于工具自优化): logs/results/<id>.md + logs/state.json
+    """
     result = build_result(state)
     meta_result = build_meta_result(state)
     route = build_route_decision(state)
@@ -272,3 +277,19 @@ def _emit_final(
         )
         + f" escalate_to_human={v.escalate_to_human} | route: {route.reason}"
     )
+    # summary: point to the artifacts the consumer needs
+    status = "审查通过" if v.satisfied else "审查未通过"
+    _echo_err("")
+    _echo_err(f"=== 总结: {status} ===")
+    _echo_err(f"  完整报告(人看): {paths['report']}")
+    _echo_err(f"  机器可读(Agent 修复): {paths['verdict']}")
+    _echo_err(f"  推导过程(工具自优化): {paths['logs_dir']}")
+    if v.satisfied:
+        _echo_err("  审查通过，无需修复。")
+    else:
+        _echo_err(
+            f"  共 {len(v.findings)} 条发现。"
+            f"Agent 修复: 读原文件 + verdict.json; "
+            f"人工修复: 读原文件 + report.md"
+        )
+    _echo_err("")
