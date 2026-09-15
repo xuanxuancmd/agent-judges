@@ -49,7 +49,7 @@ class TestInputs:
             app,
             [
                 "review", "--llm", "litellm", "--content", "需求: 系统支持高并发",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -70,7 +70,7 @@ class TestInputs:
             app,
             [
                 "review", "--llm", "litellm", "--file", str(doc),
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -92,7 +92,7 @@ class TestInputs:
             app,
             [
                 "review", "--llm", "litellm", "--file", str(verdict_file),
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -107,7 +107,7 @@ class TestInputs:
             app,
             [
                 "review", "--llm", "litellm",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -136,7 +136,7 @@ class TestInputs:
             app,
             [
                 "review", "--llm", "litellm",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--interactive",
@@ -170,7 +170,7 @@ class TestFlowDecision:
         assert route["early_stopped"] is True
         assert route["token_count"] > 0
         assert route["complexity"] == "low"
-        assert route["reviewer_names"] == ["spec-reviewer"]  # filename hint → sentinel
+        assert route["reviewer_names"] == ["design-reviewer"]  # first in document pool → sentinel
         assert len(payload["individual_verdicts"]) == 1
         assert payload["stability_degraded"] is True
         assert mock.call_count == 1
@@ -194,7 +194,7 @@ class TestFlowDecision:
         route = payload["route"]
         assert route["profile"] == "thorough"
         assert route["early_stopped"] is False
-        assert route["reviewer_names"][0] == "spec-reviewer"  # sentinel kept
+        assert route["reviewer_names"][0] == "design-reviewer"  # sentinel kept
         assert len(route["reviewer_names"]) == 3  # expanded panel
         assert len(payload["individual_verdicts"]) == 3  # sentinel verdict kept + 2
         assert "meta_review" in payload  # thorough → review_depth 1
@@ -202,8 +202,8 @@ class TestFlowDecision:
         assert payload["verdict"]["calibrated_confidence"] == 0.425
 
     def test_partial_params_filled_deterministically(self, tmp_path, install_mock_broker):
-        # -r given but no rounds/depth → standard defaults, no LLM routing,
-        # no route record; single reviewer → fast-check form (no debate)
+        # --debate-rounds given but no profile → standard defaults, no LLM
+        # routing, no route record; 2 reviewers, no debate, blind final runs
         doc = tmp_path / "spec.md"
         doc.write_text("# 规格文档", encoding="utf-8")
         install_mock_broker(MockLLM(responses=_base_responses()))
@@ -211,7 +211,8 @@ class TestFlowDecision:
             app,
             [
                 "review", "--llm", "litellm", "--file", str(doc),
-                "-r", "spec-reviewer",
+                "--scene", "document",
+                "--debate-rounds", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
                 "-o", "json",
             ],
@@ -219,8 +220,8 @@ class TestFlowDecision:
         assert result.exit_code == 0, result.output
         payload = json.loads(result.stdout)
         assert "route" not in payload  # deterministic fill leaves no route record
-        assert len(payload["individual_verdicts"]) == 1
-        assert payload["stability_degraded"] is True
+        assert len(payload["individual_verdicts"]) == 2
+        assert payload["stability_degraded"] is False
 
     def test_profile_fast_skips_routing(self, tmp_path, install_mock_broker):
         doc = tmp_path / "spec.md"
@@ -282,7 +283,7 @@ class TestFlowDecision:
             app,
             [
                 "review", "--llm", "litellm", "--content", "x",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--review-depth", "3",
                 "--reviewers-dir", str(REVIEWERS_DIR),
             ],
@@ -299,7 +300,7 @@ class TestOutput:
             app,
             [
                 "review", "--llm", "litellm", "--content", "测试内容",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -321,7 +322,7 @@ class TestOutput:
             app,
             [
                 "review", "--llm", "litellm", "--content", "测试内容",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -338,7 +339,7 @@ class TestOutput:
             app,
             [
                 "review", "--llm", "litellm", "--content", "测试",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -355,7 +356,7 @@ class TestOutput:
             app,
             [
                 "review", "--llm", "litellm", "--content", "测试",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -363,7 +364,7 @@ class TestOutput:
             ],
         )
         payload = json.loads(result.stdout)
-        assert payload["cost"]["total_cost_usd"] == 0.01
+        assert payload["cost"]["total_cost_usd"] == 0.04
         assert payload["cost"]["total_tokens"] > 0
 
 
@@ -378,7 +379,7 @@ class TestInteractive:
             app,
             [
                 "review", "--llm", "litellm", "--content", "低置信度内容",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--interactive",
@@ -398,7 +399,7 @@ class TestInteractive:
             app,
             [
                 "review", "--llm", "litellm", "--content", "高置信度内容",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--interactive",
@@ -487,42 +488,6 @@ class TestSkillsCli:
         )
         assert result.exit_code == 1
 
-    def test_skill_as_adhoc_reviewer_end_to_end(self, install_mock_broker):
-        # "通用的匿名 agent 加载用户自定义的 skill" — -r skill:<name>
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "API 契约定义……",
-                "-r", "skill:api-contract-review",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--skills-dir", str(SKILLS_DIR),
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["verdict"]["severity"] == "critical"
-        assert payload["stability_degraded"] is True  # single-reviewer fast-check
-
-    def test_unknown_skill_prefix_errors_cleanly(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "x",
-                "-r", "skill:ghost",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--skills-dir", str(SKILLS_DIR),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "ghost" in result.output
-
 
 class TestAgentMode:
     """v2 default executor: prepare/resume driven by judge-manager (FR-11)."""
@@ -546,12 +511,12 @@ class TestAgentMode:
         assert manifest["evidence_dir"]
         assert len(manifest["tasks"]) == 1
         task = manifest["tasks"][0]
-        assert task["agent"] == "spec-reviewer"  # filename hint → sentinel
-        assert task["prompt_file"] == "tasks/p1-spec-reviewer-v1.md"
+        assert task["agent"] == "design-reviewer"  # first in document pool → sentinel
+        assert task["prompt_file"] == "tasks/p1-design-reviewer-v1.md"
         # logs artifacts: state + verbatim prompt
         logs_dir = Path(manifest["logs_dir"])
         assert (logs_dir / "state.json").is_file()
-        prompt = (logs_dir / "tasks" / "p1-spec-reviewer-v1.md").read_text(encoding="utf-8")
+        prompt = (logs_dir / "tasks" / "p1-design-reviewer-v1.md").read_text(encoding="utf-8")
         assert "10000 QPS" in prompt  # verbatim content
         assert "检查清单" in prompt
 
@@ -571,7 +536,7 @@ class TestAgentMode:
         evidence_dir = Path(manifest["evidence_dir"])
         # driver writes the sentinel agent's raw reply
         (logs_dir / "results").mkdir(exist_ok=True)
-        (logs_dir / "results" / "p1-spec-reviewer-v1.md").write_text(
+        (logs_dir / "results" / "p1-design-reviewer-v1.md").write_text(
             VERDICT_JSON_SATISFIED, encoding="utf-8"
         )
         result = runner.invoke(
@@ -643,21 +608,6 @@ class TestAgentMode:
         assert result.exit_code == 1
         assert "未找到" in result.output or "resume" in result.output.lower()
 
-    def test_skill_adhoc_rejected_in_agent_mode(self, tmp_path):
-        doc = tmp_path / "api.md"
-        doc.write_text("x", encoding="utf-8")
-        result = runner.invoke(
-            app,
-            [
-                "review", "--file", str(doc),
-                "-r", "skill:api-contract-review",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--skills-dir", str(SKILLS_DIR),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "litellm" in result.output  # suggests the direct mode
-
     def test_unknown_llm_mode_errors(self, tmp_path):
         doc = tmp_path / "s.md"
         doc.write_text("x", encoding="utf-8")
@@ -677,7 +627,7 @@ class TestAgentMode:
             app,
             [
                 "review", "--file", str(doc),
-                "-r", "spec-reviewer", "-r", "design-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "1",
                 "--reviewers-dir", str(REVIEWERS_DIR),
             ],
@@ -686,7 +636,7 @@ class TestAgentMode:
         manifest = json.loads(result.stdout)
         assert manifest["stage"] == "awaiting_panel"
         assert {t["agent"] for t in manifest["tasks"]} == {
-            "spec-reviewer", "design-reviewer"
+            "design-reviewer", "documentation-reviewer"
         }
 
 
@@ -705,7 +655,7 @@ class TestBaseUrl:
             app,
             [
                 "review", "--llm", "litellm", "--content", "本地模型测试",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -735,7 +685,7 @@ class TestCredentialHint:
             app,
             [
                 "review", "--llm", "litellm", "--content", "凭证提示测试",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -765,7 +715,7 @@ class TestCredentialHint:
             app,
             [
                 "review", "--llm", "litellm", "--content", "本地模型",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
@@ -784,7 +734,7 @@ class TestReviewDepthTwo:
             app,
             [
                 "review", "--llm", "litellm", "--content", "关键交付物",
-                "-r", "spec-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "0",
                 "--review-depth", "2",
                 "--reviewers-dir", str(REVIEWERS_DIR),

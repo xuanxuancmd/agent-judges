@@ -17,6 +17,7 @@ __all__ = [
     "failed_verdict",
     "compute_consensus",
     "compute_stability",
+    "detect_conformity",
     "aggregate_majority_votes",
 ]
 
@@ -107,6 +108,38 @@ def compute_stability(
         1 for i, f in zip(individual, final) if i.satisfied == f.satisfied
     )
     return round(unchanged / len(individual), 4)
+
+
+def detect_conformity(
+    individual: list[Verdict], final: list[Verdict]
+) -> list[str]:
+    """Detect reviewers who flipped their satisfied position without
+    adding new findings — a sycophancy signal (MachineSoM, ACL 2024).
+
+    A reviewer who changes their verdict (satisfied True→False or vice
+    versa) **without introducing any new finding** in their Phase-3
+    blind final is likely conforming to peer pressure rather than
+    responding to new evidence. This is not a definitive judgment — the
+    reviewer may have validly retracted a flawed finding — but it flags
+    the case for audit.
+
+    Returns a list of warning strings (empty = no conformity detected).
+    """
+    if not individual or not final:
+        return []
+    warnings: list[str] = []
+    for idx, (ind, fin) in enumerate(zip(individual, final)):
+        if ind.satisfied == fin.satisfied:
+            continue  # position didn't flip
+        ind_descs = {f.description for f in ind.findings}
+        fin_descs = {f.description for f in fin.findings}
+        new_findings = fin_descs - ind_descs
+        if not new_findings:
+            warnings.append(
+                f"reviewer #{idx}: satisfied {ind.satisfied}→{fin.satisfied} "
+                f"without new findings (possible conformity)"
+            )
+    return warnings
 
 
 def aggregate_majority_votes(verdicts: list[Verdict]) -> Verdict:

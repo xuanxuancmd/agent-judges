@@ -1,6 +1,7 @@
 ---
 name: design-reviewer
 description: 审查设计文档,检查需求覆盖、技术风险消解、方案选择依据
+scenes: [document]
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 checklist:
   - criteria: 设计覆盖所有需求(含非功能性需求)

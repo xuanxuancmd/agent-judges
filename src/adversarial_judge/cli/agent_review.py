@@ -36,6 +36,7 @@ from ..engine import (
 )
 from ..output import render_json, render_markdown
 from ..reviewer import ReviewerRegistry
+from ..router import filter_by_scene, infer_scene_from_filename
 from ..run_state import (
     copy_run_output,
     find_latest_run,
@@ -97,7 +98,7 @@ def run_agent_review(
     filename: str | None,
     context: str | None,
     profile: str | None,
-    reviewers: list[str] | None,
+    scene: str | None,
     debate_rounds: int | None,
     review_depth: int | None,
     meta_review: bool,
@@ -141,17 +142,15 @@ def run_agent_review(
 
     # ------------------------------------------------------------------ #
     # prepare (fresh run)
-    if any(r.startswith("skill:") for r in (reviewers or [])):
-        _echo_err(
-            "Error: agent 模式不支持 -r skill:<name>(知识包无实体宿主 Agent)。"
-            "请改用 --llm litellm 直接模式。"
-        )
-        raise typer.Exit(1)
-
     meta_available = all(n in configs for n in META_REVIEWERS)
+    effective_scene = scene or infer_scene_from_filename(filename)
+    # filter available by scene
+    available = filter_by_scene(
+        available, {n: c.scenes for n, c in configs.items()}, effective_scene
+    )
+
     zero_flow_params = (
-        reviewers is None
-        and profile is None
+        profile is None
         and debate_rounds is None
         and review_depth is None
         and not meta_review
@@ -166,6 +165,7 @@ def run_agent_review(
             available=available,
             threshold=threshold,
             max_tier="thorough" if meta_available else "standard",
+            scene=effective_scene,
         )
     else:
         if meta_review:
@@ -173,13 +173,11 @@ def run_agent_review(
         try:
             flow = resolve_flow(
                 FlowRequest(
-                    reviewers=reviewers,
+                    scene=effective_scene,
                     debate_rounds=debate_rounds,
                     review_depth=review_depth,
                     profile=profile,
-                    review_content=content,
                     available=available,
-                    filename=filename,
                 )
             )
         except FlowError as e:
@@ -199,6 +197,7 @@ def run_agent_review(
             debate_rounds=flow.debate_rounds,
             review_depth=flow.review_depth,
             threshold=threshold,
+            scene=effective_scene,
         )
 
     # run directory pair (logs + evidence)

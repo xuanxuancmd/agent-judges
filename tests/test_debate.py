@@ -8,10 +8,11 @@ import time
 from adversarial_judge.consensus import (
     compute_consensus,
     compute_stability,
+    detect_conformity,
     synthesize_verdict,
 )
 from adversarial_judge.debate import DebateOrchestrator
-from adversarial_judge.types import Severity
+from adversarial_judge.types import Finding, Severity
 
 from fixtures.helpers import (
     VERDICT_JSON_SATISFIED,
@@ -118,6 +119,66 @@ class TestStability:
 
     def test_empty(self):
         assert compute_stability([], []) == 1.0
+
+
+class TestConformity:
+    """detect_conformity: flag reviewers who flip satisfied without new findings."""
+
+    def _finding(self, desc: str = "a finding") -> Finding:
+        return Finding(
+            description=desc,
+            severity=Severity.MAJOR,
+            confidence=0.7,
+            evidence="evidence",
+            suggestion="suggestion",
+        )
+
+    def test_no_flip_no_warning(self):
+        """Reviewers who don't change their satisfied position → no warning."""
+        individual = [make_verdict(Severity.PASS, satisfied=True),
+                      make_verdict(Severity.MAJOR, satisfied=False)]
+        final = [make_verdict(Severity.PASS, satisfied=True),
+                 make_verdict(Severity.MAJOR, satisfied=False)]
+        assert detect_conformity(individual, final) == []
+
+    def test_flip_with_new_finding_no_warning(self):
+        """Reviewer flips but adds a new finding → not conformity."""
+        ind = make_verdict(Severity.MAJOR, satisfied=False)
+        fin = make_verdict(Severity.PASS, satisfied=True)
+        fin.findings = [self._finding("new-issue")]
+        assert detect_conformity([ind], [fin]) == []
+
+    def test_flip_without_new_finding_warns(self):
+        """Reviewer flips satisfied but adds no new finding → warning."""
+        ind = make_verdict(Severity.MAJOR, satisfied=False)
+        fin = make_verdict(Severity.PASS, satisfied=True)
+        warnings = detect_conformity([ind], [fin])
+        assert len(warnings) == 1
+        assert "False→True" in warnings[0]
+
+    def test_flip_with_retracted_finding_only_still_warns(self):
+        """Reviewer flips, removes a finding but adds none → still warns
+        (acknowledged false positive in docstring)."""
+        ind = make_verdict(Severity.MAJOR, satisfied=False)
+        ind.findings = [self._finding("a"), self._finding("b")]
+        fin = make_verdict(Severity.PASS, satisfied=True)
+        fin.findings = [self._finding("a")]  # only removed, no new
+        warnings = detect_conformity([ind], [fin])
+        assert len(warnings) == 1
+
+    def test_empty_lists(self):
+        assert detect_conformity([], []) == []
+
+    def test_mixed_panel(self):
+        """2 reviewers: one flips with new finding, one flips without."""
+        ind1 = make_verdict(Severity.MAJOR, satisfied=False)
+        ind2 = make_verdict(Severity.MAJOR, satisfied=False)
+        fin1 = make_verdict(Severity.PASS, satisfied=True)
+        fin1.findings = [self._finding("new")]  # justified flip
+        fin2 = make_verdict(Severity.PASS, satisfied=True)  # no new finding
+        warnings = detect_conformity([ind1, ind2], [fin1, fin2])
+        assert len(warnings) == 1
+        assert "#1" in warnings[0]
 
 
 class TestFullDebate:

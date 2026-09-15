@@ -132,7 +132,7 @@ class TestMockE2E:
         assert route["early_stopped"] is True
         assert route["profile"] == "fast"
         # (B-4) early stop reports exactly the reviewers that ran
-        assert route["reviewer_names"] == ["spec-reviewer"]  # spec.md filename hint
+        assert route["reviewer_names"] == ["design-reviewer"]  # first in document pool
         assert route["token_count"] < 8000
         v = outcome.verdict["verdict"]
         assert v["severity"] == "pass"
@@ -233,7 +233,7 @@ class TestLitellmDirectPathE2E:
             app,
             [
                 "review", "--llm", "litellm", "--file", str(TODO_SPEC),
-                "-r", "spec-reviewer", "-r", "design-reviewer",
+                "--scene", "document",
                 "--debate-rounds", "1", "--review-depth", "0",
                 "--reviewers-dir", str(REVIEWERS_DIR),
                 "--skills-dir", str(SKILLS_DIR),

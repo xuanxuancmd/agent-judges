@@ -8,7 +8,7 @@
 #   这些由系统固定控制(4 阶段: 独立评审 → 对抗辩论 → 盲评终判 → 裁决合成)。
 #
 # frontmatter 字段说明:
-#   name          唯一标识(slug: 字母数字 + -/_)。CLI 用 -r <name> 引用
+#   name          唯一标识(slug: 字母数字 + -/_)。CLI 用 --scene 路由匹配
 #   description   人类可读描述(agent-judges list-reviewers 展示)
 #   model         可选。宿主命名空间模型名,省略 = 宿主默认模型
 #                 (claude 系宿主: opus/sonnet/完整 ID; opencode 系: provider/model)
@@ -20,10 +20,11 @@
 # 正文(frontmatter 下方)即 persona: 审查者人设 + 关注维度。
 #
 # 使用: 将此文件复制为 my_reviewer.md,修改内容,然后:
-#   agent-judges review --file your-doc.md -r my-security-auditor
+#   agent-judges review --file your-doc.md --scene document
 # ==============================================================
 name: my-security-auditor
 description: (示例)安全审计视角——审查产出物中的安全缺陷与风险
+scenes: [document, code]
 # model: opus    # 取消注释以指定模型(宿主命名空间)
 checklist:
   - criteria: 认证与授权路径完整,无未保护入口

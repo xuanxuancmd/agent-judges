@@ -51,8 +51,7 @@ def test_integration_requirement_debate():
         app,
         [
             "review", "--content", CONTENT_REQUIREMENT,
-            "-r", "requirement-elicitation-reviewer",
-            "-r", "spec-reviewer",
+            "--scene", "document",
             "--debate-rounds", "1",
             "--review-depth", "0",
             "--llm", "litellm",  # in-process direct mode: one-shot JSON verdict

@@ -10,29 +10,27 @@ from adversarial_judge.reviewer import ReviewerConfig, ReviewerRegistry
 
 def test_stock_yaml_loads_all_templates(stock_registry):
     all_reviewers = stock_registry.list_all()
-    assert len(all_reviewers) >= 20
+    assert len(all_reviewers) >= 14
     names = {r.name for r in all_reviewers}
-    # process-level templates (CyberAgent-inspired)
-    assert {"process-compliance-reviewer", "deception-detector",
+    # adversarial / process-level
+    assert {"deception-detector",
             "dangerous-operation-scanner"} <= names
     # both meta reviewers (B-3)
     assert {"meta-reviewer", "meta-reviewer-2"} <= names
-    # requirement-analysis sub-stages (spec 2.1, omission A-1)
-    assert {"requirement-elicitation-reviewer", "requirement-clarification-reviewer",
-            "requirement-decomposition-reviewer", "requirement-prioritization-reviewer",
-            "requirement-acceptance-reviewer"} <= names
+    # document reviewers
+    assert {"spec-reviewer", "design-reviewer", "documentation-reviewer",
+            "test-plan-reviewer"} <= names
     # post-code-generation sub-stages (spec 2.2, omission A-1)
     assert {"implementation-vs-requirement-reviewer", "unit-test-reviewer",
-            "integration-test-reviewer", "deployment-config-reviewer",
-            "documentation-reviewer", "test-plan-reviewer"} <= names
+            "integration-test-reviewer", "deployment-config-reviewer"} <= names
 
 
 def test_get_returns_correct_config(stock_registry):
-    r = stock_registry.get("requirement-elicitation-reviewer")
+    r = stock_registry.get("spec-reviewer")
     # v2: model values were removed during the MD migration (host default);
     # users opt into a host-namespace model per reviewer when wanted
     assert r.model is None
-    assert "需求分析师" in r.system_prompt
+    assert "规格" in r.system_prompt
     assert len(r.checklist) >= 5
 
 

@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from .consensus import (
     compute_consensus,
     compute_stability,
+    detect_conformity,
     failed_verdict,
     synthesize_verdict,
 )
@@ -56,7 +57,7 @@ from .prompts.debate import (
 from .prompts.judge_system import build_system_prompt
 from .prompts.judge_user import build_judge_prompt
 from .reviewer import ReviewerConfig, ReviewerRegistry
-from .router import PROFILE_MAP, deterministic_panel
+from .router import PROFILE_MAP, deterministic_panel, infer_scene_from_filename
 from .types import Verdict
 from .utils.truncate import count_tokens, truncate_string
 
@@ -90,6 +91,9 @@ class DebateResult:
     stability_degraded: bool = field(
         default=False
     )  # True = fast-check mode (Phase 3 skipped), stability not measurable
+    conformity_warnings: list[str] = field(
+        default_factory=list
+    )  # reviewers who flipped without new findings (MachineSoM, ACL 2024)
 
 
 class DebateOrchestrator:
@@ -136,6 +140,7 @@ class DebateOrchestrator:
         filename: str | None = None,
         candidates: list[str] | None = None,
         max_tier: str = "thorough",
+        scene: str | None = None,
     ) -> tuple[DebateResult, ProgressiveDecision]:
         """Sentinel-gated progressive review (zero-parameter auto mode).
 
@@ -152,7 +157,9 @@ class DebateOrchestrator:
         meta-reviewer templates are unavailable).
         """
         # Active verification: enrich context with graphify evidence
-        context = enrich_context(content, context, filename)
+        if scene is None:
+            scene = infer_scene_from_filename(filename)
+        context = enrich_context(content, context, filename, scene=scene)
         available = candidates or [
             r.name
             for r in self.registry.list_all()
@@ -160,12 +167,7 @@ class DebateOrchestrator:
         ]
         token_count = count_tokens(content)
         start = start_panel_size(token_count)
-        content_type, panel_names = deterministic_panel(
-            available,
-            PROFILE_MAP["thorough"]["reviewers"],
-            filename=filename,
-            content=content,
-        )
+        panel_names = deterministic_panel(available, PROFILE_MAP["thorough"]["reviewers"])
         reviewers = [self.registry.get(n) for n in panel_names]
         gate1_reason: str | None = None
 
@@ -193,6 +195,7 @@ class DebateOrchestrator:
                     consensus_score=compute_consensus([sentinel_verdict]),
                     stability_score=1.0,
                     stability_degraded=True,
+                    conformity_warnings=[],
                 )
                 decision = ProgressiveDecision(
                     token_count=token_count,
@@ -201,7 +204,7 @@ class DebateOrchestrator:
                     tier="fast",
                     gate1_reason=gate1_reason,
                     gate2_reason=None,
-                    content_type=content_type,
+                    content_type=scene,
                     reviewers=[sentinel.name],
                     debate_rounds=0,
                     review_depth=0,
@@ -231,7 +234,7 @@ class DebateOrchestrator:
             tier=tier,
             gate1_reason=gate1_reason,
             gate2_reason=gate2_reason,
-            content_type=content_type,
+            content_type=scene,
             reviewers=[r.name for r in reviewers],
             debate_rounds=settings["debate_rounds"],
             review_depth=int(settings["meta_review"]),
@@ -262,6 +265,7 @@ class DebateOrchestrator:
                 final_verdict=final_verdict,
                 consensus_score=compute_consensus(individual_verdicts),
                 stability_score=1.0,
+                conformity_warnings=[],
             )
 
         # Phase 2: adversarial debate — only when >= 2 reviewers (B-3)
@@ -290,6 +294,7 @@ class DebateOrchestrator:
             )
             stability = compute_stability(individual_verdicts, final_verdicts)
             stability_degraded = False
+            conformity = detect_conformity(individual_verdicts, final_verdicts)
         else:
             logger.info(
                 "单 reviewer 快检形态: 跳过盲评终判,stability 标记 degraded"
@@ -297,6 +302,7 @@ class DebateOrchestrator:
             final_verdicts = individual_verdicts
             stability = 1.0
             stability_degraded = True
+            conformity = []
 
         # Phase 4: verdict synthesis
         final_verdict = synthesize_verdict(final_verdicts, reviewers, content)
@@ -310,6 +316,7 @@ class DebateOrchestrator:
             consensus_score=consensus,
             stability_score=stability,
             stability_degraded=stability_degraded,
+            conformity_warnings=conformity,
         )
 
     # ------------------------------------------------------------------

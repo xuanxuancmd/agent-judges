@@ -40,6 +40,8 @@ class ReviewerConfig(BaseModel):
     AaaJ's lightweight anti-hallucination mechanism.
     ``skills``: names of skill packages (knowledge injection) whose bodies
     are appended to this reviewer's system prompt at registry-load time.
+    ``scenes``: applicable review scenes (document/code/review-report).
+    Empty list = not routed by scene (e.g. meta-reviewer, system-internal).
 
     Mutable by design: the CLI overrides ``model`` at runtime
     (``--override-model``) and the registry appends resolved skill bodies
@@ -54,6 +56,7 @@ class ReviewerConfig(BaseModel):
     weight: float = Field(default=1.0, gt=0)
     majority_vote: int = Field(default=1, ge=1)
     skills: list[str] = []
+    scenes: list[str] = []
     temperature: float | None = None
     max_output_tokens: int | None = None
 

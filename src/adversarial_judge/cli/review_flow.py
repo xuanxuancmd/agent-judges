@@ -5,8 +5,7 @@ Three-tier decision (revised): explicit fine-grained params > ``--profile``
 > progressive review (sentinel-gated; see ``progressive.py``).
 Zero-parameter calls no longer pre-classify content with an LLM — the
 sentinel review and deterministic gates decide the flow strength from
-measured Phase-1 results. Partial manual params (e.g. only ``-r``) are
-filled deterministically with standard defaults.
+measured Phase-1 results.
 """
 
 from __future__ import annotations
@@ -44,13 +43,11 @@ class FlowError(ValueError):
 class FlowRequest:
     """Inputs to the three-tier flow decision."""
 
-    reviewers: list[str] | None = None
+    scene: str = "document"
     debate_rounds: int | None = None
     review_depth: int | None = None
     profile: str | None = None
-    review_content: str = ""
     available: list[str] = field(default_factory=list)
-    filename: str | None = None  # --file basename (deterministic classification)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +57,7 @@ class ResolvedFlow:
     reviewers: list[str]
     debate_rounds: int
     review_depth: int
-    route_decision: RouteDecision | None  # None = fully manual or progressive
+    route_decision: RouteDecision | None  # None = progressive
     progressive: bool = False  # sentinel-gated mode: params decided mid-run
 
 
@@ -101,8 +98,7 @@ def resolve_flow(request: FlowRequest) -> ResolvedFlow:
     # zero flow params at all → progressive sentinel-gated mode; the panel,
     # rounds and depth are decided by the gates after Phase 1
     if (
-        request.reviewers is None
-        and request.profile is None
+        request.profile is None
         and request.debate_rounds is None
         and request.review_depth is None
     ):
@@ -121,11 +117,12 @@ def resolve_flow(request: FlowRequest) -> ResolvedFlow:
             )
         settings = PROFILE_MAP[request.profile]
         route_decision = RouteDecision(
-            content_type="other",
+            content_type=request.scene,
             complexity="medium",
             profile=request.profile,
-            reviewer_names=request.reviewers
-            or generic_reviewer_combo(request.available, settings["reviewers"]),
+            reviewer_names=generic_reviewer_combo(
+                request.available, settings["reviewers"]
+            ),
             reason=f"explicit profile: {request.profile}",
         )
         return ResolvedFlow(
@@ -144,15 +141,9 @@ def resolve_flow(request: FlowRequest) -> ResolvedFlow:
         )
 
     # partial manual params: fill gaps deterministically (no LLM call)
-    reviewers = request.reviewers
-    if reviewers is None:
-        _, panel = deterministic_panel(
-            request.available,
-            PROFILE_MAP["standard"]["reviewers"],
-            filename=request.filename,
-            content=request.review_content,
-        )
-        reviewers = panel
+    reviewers = deterministic_panel(
+        request.available, PROFILE_MAP["standard"]["reviewers"]
+    )
     return ResolvedFlow(
         reviewers=reviewers,
         debate_rounds=(

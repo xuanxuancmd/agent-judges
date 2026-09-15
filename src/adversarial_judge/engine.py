@@ -23,6 +23,7 @@ from .consensus import (
     aggregate_majority_votes,
     compute_consensus,
     compute_stability,
+    detect_conformity,
     failed_verdict,
     synthesize_verdict,
 )
@@ -49,7 +50,13 @@ from .progressive import (
     start_panel_size,
 )
 from .reviewer import ReviewerConfig
-from .router import PROFILE_MAP, RouteDecision, deterministic_panel
+from .router import (
+    PROFILE_MAP,
+    RouteDecision,
+    deterministic_panel,
+    filter_by_scene,
+    infer_scene_from_filename,
+)
 from .run_state import (
     AgentTask,
     DebateRound,
@@ -85,14 +92,18 @@ def prepare_progressive(
     available: list[str],
     threshold: float = 0.8,
     max_tier: str = "thorough",
+    scene: str | None = None,
 ) -> tuple[RunState, _TaskList]:
     """Zero-flow-param start: deterministic token rule + sentinel first."""
-    context = enrich_context(content, context, filename)
+    if scene is None:
+        scene = infer_scene_from_filename(filename)
+    context = enrich_context(content, context, filename, scene=scene)
     token_count = count_tokens(content)
     start = start_panel_size(token_count)
-    content_type, panel = deterministic_panel(
-        available, PROFILE_MAP["thorough"]["reviewers"], filename=filename, content=content
+    pool = filter_by_scene(
+        available, {n: c.scenes for n, c in configs.items()}, scene
     )
+    panel = deterministic_panel(pool, PROFILE_MAP["thorough"]["reviewers"])
     state = RunState(
         content=content,
         context=context,
@@ -100,7 +111,7 @@ def prepare_progressive(
         panel=panel,
         all_reviewers=list(available),
         token_count=token_count,
-        content_type=content_type,
+        content_type=scene,
         threshold=threshold,
         gated=True,
         max_tier=max_tier,
@@ -125,9 +136,12 @@ def prepare_fixed(
     debate_rounds: int,
     review_depth: int,
     threshold: float = 0.8,
+    scene: str | None = None,
 ) -> tuple[RunState, _TaskList]:
     """Explicit-params start: full panel immediately, gates disabled."""
-    context = enrich_context(content, context, filename)
+    if scene is None:
+        scene = infer_scene_from_filename(filename)
+    context = enrich_context(content, context, filename, scene=scene)
     token_count = count_tokens(content)
     state = RunState(
         content=content,
@@ -136,7 +150,7 @@ def prepare_fixed(
         panel=list(panel),
         all_reviewers=list(panel),
         token_count=token_count,
-        content_type="other",
+        content_type=scene,
         threshold=threshold,
         gated=False,
         planned_debate_rounds=debate_rounds,
@@ -642,9 +656,11 @@ def _synthesize_final(
     if stability_degraded or finals is None:
         state.stability_score = 1.0
         state.stability_degraded = True
+        state.conformity_warnings = []
     else:
         state.stability_score = compute_stability(individual, finals)
         state.stability_degraded = False
+        state.conformity_warnings = detect_conformity(individual, finals)
 
 
 def _finalize(state: RunState) -> None:
@@ -692,6 +708,7 @@ def build_result(state: RunState) -> DebateResult:
         consensus_score=state.consensus_score,
         stability_score=state.stability_score,
         stability_degraded=state.stability_degraded,
+        conformity_warnings=state.conformity_warnings,
     )
 
 

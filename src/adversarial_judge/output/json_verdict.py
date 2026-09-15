@@ -100,6 +100,7 @@ def render_json(
         "consensus_score": result.consensus_score,
         "stability_score": result.stability_score,
         "stability_degraded": result.stability_degraded,
+        "conformity_warnings": result.conformity_warnings,
         "threshold": confidence_threshold,
     }
     if route is not None:

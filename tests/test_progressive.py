@@ -137,7 +137,7 @@ class TestProgressiveDecisionRoute:
             tier="fast",
             gate1_reason="干净通过",
             gate2_reason=None,
-            content_type="spec",
+            content_type="document",
             reviewers=["spec-reviewer"],
             debate_rounds=0,
             review_depth=0,
@@ -158,7 +158,7 @@ class TestProgressiveDecisionRoute:
             tier="thorough",
             gate1_reason=None,
             gate2_reason="存在 critical 发现",
-            content_type="spec",
+            content_type="document",
             reviewers=["a", "b", "c"],
             debate_rounds=2,
             review_depth=1,
@@ -177,7 +177,7 @@ class TestProgressiveDecisionRoute:
 
 class TestResolveFlow:
     def test_zero_params_progressive(self):
-        flow = resolve_flow(FlowRequest(review_content="x", available=["a"]))
+        flow = resolve_flow(FlowRequest(available=["a"]))
         assert flow.progressive is True
         assert flow.reviewers == []
         assert flow.route_decision is None
@@ -185,7 +185,7 @@ class TestResolveFlow:
     def test_fully_manual_not_progressive(self):
         flow = resolve_flow(
             FlowRequest(
-                reviewers=["a"], debate_rounds=0, review_depth=0, available=["a"]
+                debate_rounds=0, review_depth=0, available=["a"]
             )
         )
         assert flow.progressive is False
@@ -197,14 +197,14 @@ class TestResolveFlow:
         assert flow.route_decision.profile == "fast"
 
     def test_partial_params_filled_with_standard_defaults(self):
-        flow = resolve_flow(FlowRequest(reviewers=["a"], available=["a"]))
+        flow = resolve_flow(FlowRequest(review_depth=0, available=["a"]))
         assert flow.progressive is False
         assert flow.debate_rounds == 1  # standard default, no LLM routing
         assert flow.review_depth == 0
 
     def test_no_available_errors(self):
         with pytest.raises(FlowError):
-            resolve_flow(FlowRequest(review_content="x", available=[]))
+            resolve_flow(FlowRequest(available=[]))
 
 
 # ---------------------------------------------------------------------------
@@ -324,14 +324,3 @@ class TestRunProgressive:
         assert decision.reviewers == ["only-reviewer"]
         assert result.stability_degraded is True
         assert result.final_verdict.severity == Severity.MAJOR
-
-    def test_deterministic_panel_prefers_content_hint(self):
-        # filename hint routes the sentinel to the matching reviewer
-        mock = MockLLM(responses={"审查框架": VERDICT_JSON_SATISFIED})
-        names = ("spec-reviewer", "second-reviewer", "third-reviewer")
-        orch = _orchestrator(mock, names)
-        _, decision = orch.run_progressive(
-            "短内容", filename="spec.md", candidates=list(names)
-        )
-        assert decision.content_type == "spec"
-        assert decision.reviewers == ["spec-reviewer"]  # hint-matched sentinel, early stop

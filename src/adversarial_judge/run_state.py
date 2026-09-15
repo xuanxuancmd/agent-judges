@@ -121,7 +121,7 @@ class RunState(BaseModel):
     panel: list[str] = Field(default_factory=list)  # active reviewer names
     all_reviewers: list[str] = Field(default_factory=list)  # full pool
     token_count: int = 0
-    content_type: str = "other"
+    content_type: str = "document"
     threshold: float = 0.8
     gated: bool = True  # progressive gates vs fixed plan
     max_tier: str = "thorough"
@@ -146,6 +146,7 @@ class RunState(BaseModel):
     consensus_score: float = 0.0
     stability_score: float = 1.0
     stability_degraded: bool = False
+    conformity_warnings: list[str] = Field(default_factory=list)
 
     # audit
     gate1_reason: str | None = None

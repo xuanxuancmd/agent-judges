@@ -11,12 +11,16 @@ reviewer (LLM) never calls graphify; the engine collects evidence
 *before* dispatching tasks and appends it to the prompt context.  The
 reviewer reads the evidence as richer context, same as any
 ``--context`` text.
+
+Activation: graphify evidence is only collected when the review scene
+is ``"code"``.  For document and review-report scenes, this function
+returns ``None`` immediately — the scene is declared by the user (or
+inferred from the file extension), not guessed from content.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -24,26 +28,6 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 __all__ = ["collect_graphify_evidence", "enrich_context"]
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-#: File extensions whose content warrants graphify evidence.
-_CODE_EXTENSIONS = frozenset({
-    ".py", ".pyi", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
-    ".go", ".rs", ".java", ".kt", ".scala", ".clj",
-    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx",
-    ".cs", ".rb", ".php", ".swift", ".dart", ".lua",
-    ".zig", ".ex", ".exs", ".hs", ".jl", ".ml", ".fs",
-})
-
-#: Regex detecting code keywords to distinguish code from prose.
-_CODE_KEYWORDS = re.compile(
-    r"\b(?:def|class|function|fn|func|import|package|pub|private|public|"
-    r"async|await|return|elif|struct|enum|interface|trait|impl|module|"
-    r"export|const|let|var|void)\b",
-)
 
 #: Timeout for a single graphify CLI invocation (seconds).
 _CLI_TIMEOUT = 15
@@ -60,33 +44,34 @@ _QUERY_BUDGET = 1500
 def collect_graphify_evidence(
     content: str,
     filename: str | None = None,
+    scene: str = "document",
     graph_path: Path | None = None,
 ) -> str | None:
     """Collect code-structure evidence from a graphify knowledge graph.
 
     Returns evidence text suitable for prompt injection, or ``None`` when
-    graphify is unavailable, no graph exists, or the content does not
-    look like code.
+    graphify is unavailable, no graph exists, or the scene is not "code".
 
     Parameters
     ----------
     content
         The text under review.
     filename
-        Optional filename hint (used to detect code files and to look
-        up nodes by stem).
+        Optional filename hint (used to look up nodes by stem).
+    scene
+        The review scene. Only "code" triggers graphify; all other
+        scenes return ``None`` immediately.
     graph_path
         Explicit path to ``graph.json``.  Defaults to
         ``./.graph/graph.json`` in the current working directory.
     """
-    # 1. graphify CLI must be on PATH
-    if not shutil.which("graphify"):
-        logger.debug("graphify CLI not found in PATH; skipping active verification")
+    # 1. only code scene triggers graphify
+    if scene != "code":
         return None
 
-    # 2. content must look like code (skip pure prose documents)
-    if not _is_code_like(content, filename):
-        logger.debug("content does not look like code; skipping graphify evidence")
+    # 2. graphify CLI must be on PATH
+    if not shutil.which("graphify"):
+        logger.debug("graphify CLI not found in PATH; skipping active verification")
         return None
 
     # 3. graph file must exist
@@ -129,6 +114,7 @@ def enrich_context(
     content: str,
     context: str | None,
     filename: str | None = None,
+    scene: str = "document",
     graph_path: Path | None = None,
 ) -> str | None:
     """Return *context* enriched with graphify evidence.
@@ -137,7 +123,9 @@ def enrich_context(
     context.  If not, the original context is returned unchanged — the
     caller never needs to branch on graphify availability.
     """
-    evidence = collect_graphify_evidence(content, filename, graph_path=graph_path)
+    evidence = collect_graphify_evidence(
+        content, filename, scene=scene, graph_path=graph_path
+    )
     if evidence is None:
         return context
     if context:
@@ -148,16 +136,6 @@ def enrich_context(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
-
-
-def _is_code_like(content: str, filename: str | None) -> bool:
-    """Heuristic: does this content look like code rather than prose?"""
-    if filename:
-        ext = Path(filename).suffix.lower()
-        if ext in _CODE_EXTENSIONS:
-            return True
-    matches = _CODE_KEYWORDS.findall(content[:2000])
-    return len(matches) >= 3
 
 
 def _build_query(content: str, filename: str | None) -> str:

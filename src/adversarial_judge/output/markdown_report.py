@@ -140,6 +140,10 @@ def render_markdown(
         else f"{result.stability_score}"
     )
     lines.append(f"- 稳定性 (stability): {stable}")
+    if result.conformity_warnings:
+        lines.append(f"- ⚠️ 从众警示 (conformity): {len(result.conformity_warnings)} 个 reviewer 翻转立场但无新发现")
+        for w in result.conformity_warnings:
+            lines.append(f"  - {w}")
     lines.append("")
 
     # meta-review summary (compact: calibration result only, no reasoning)

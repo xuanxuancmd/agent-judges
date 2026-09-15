@@ -9,11 +9,22 @@ __all__ = [
 
 
 def build_debate_system_prompt(persona: str) -> str:
-    """System prompt for a debate round: challenge, don't capitulate."""
+    """System prompt for a debate round: challenge, don't capitulate.
+
+    Two constraints (agent-review-panel HOW_WE_BUILT_THIS.md insights):
+    1. Only challenge findings within your expertise (PBR principle —
+       reviewers with orthogonal dimensions should not overrule each
+       other's domain-specific findings).
+    2. Add at least one new finding in your own dimension (New Discovery
+       Requirement — prevents debate from degenerating into pure
+       argumentation at the expense of discovery).
+    """
     return (
         persona.rstrip()
-        + "\n\n你现在进入辩论阶段。其他审查者的观点如下,"
-        "请挑战你不同意的部分,坚持你有证据的部分:\n"
+        + "\n\n你现在进入辩论阶段。其他审查者的观点如下。请:\n"
+        "1. 仅对你有专业判断能力的发现发表意见,挑战你不同意的部分,"
+        "坚持你有证据的部分\n"
+        "2. 基于其他审查者的发现,补充你维度内的新问题\n"
     )
 
 

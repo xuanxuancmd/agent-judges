@@ -16,8 +16,9 @@ Two usage modes:
 1. **Referenced by a reviewer template** — ``skills: [name, ...]`` in the
    reviewer YAML: skill bodies are appended to that reviewer's persona at
    registry-load time.
-2. **Loaded directly as an ad-hoc reviewer** — ``-r skill:<name>``: the
-   anonymous slot adopts the skill as its complete review perspective.
+2. **Programmatic ad-hoc** — ``SkillRegistry.as_reviewer()``: the anonymous
+   slot adopts the skill as its complete review perspective (used by the
+   ``inspect-reviewer`` CLI command for debugging).
 """
 
 import logging
@@ -160,7 +161,7 @@ class SkillRegistry:
 
     def as_reviewer(self, skill_name: str) -> ReviewerConfig:
         """Adopt a skill as a complete review perspective for one anonymous
-        slot (the ``-r skill:<name>`` ad-hoc reviewer mode)."""
+        slot (programmatic ad-hoc mode, used by ``inspect-reviewer``)."""
         skill = self.get(skill_name)
         checklist = skill.checklist or [
             ChecklistItem(criteria="按 skill 指令完成审查")

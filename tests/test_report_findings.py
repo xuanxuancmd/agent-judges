@@ -178,7 +178,7 @@ class TestCLISummary:
             [
                 "review", "--file", str(doc),
                 "--reviewers-dir", str(REVIEWERS_DIR),
-                "-r", "spec-reviewer", "--debate-rounds", "0",
+                "--profile", "fast",
                 "-o", "json",
             ],
         )
@@ -186,7 +186,8 @@ class TestCLISummary:
         manifest = json.loads(result.stdout)
         logs_dir = Path(manifest["logs_dir"])
         (logs_dir / "results").mkdir(exist_ok=True)
-        (logs_dir / "results" / "p1-spec-reviewer-v1.md").write_text(
+        task_id = manifest["tasks"][0]["task_id"]
+        (logs_dir / "results" / f"{task_id}.md").write_text(
             VERDICT_JSON_SATISFIED, encoding="utf-8"
         )
         result = runner.invoke(
@@ -214,14 +215,15 @@ class TestCLISummary:
             [
                 "review", "--file", str(doc),
                 "--reviewers-dir", str(REVIEWERS_DIR),
-                "-r", "spec-reviewer", "--debate-rounds", "0",
+                "--profile", "fast",
                 "-o", "json",
             ],
         )
         manifest = json.loads(result.stdout)
         logs_dir = Path(manifest["logs_dir"])
         (logs_dir / "results").mkdir(exist_ok=True)
-        (logs_dir / "results" / "p1-spec-reviewer-v1.md").write_text(
+        task_id = manifest["tasks"][0]["task_id"]
+        (logs_dir / "results" / f"{task_id}.md").write_text(
             VERDICT_JSON_UNSATISFIED, encoding="utf-8"
         )
         result = runner.invoke(
@@ -242,14 +244,15 @@ class TestCLISummary:
             [
                 "review", "--file", str(doc),
                 "--reviewers-dir", str(REVIEWERS_DIR),
-                "-r", "spec-reviewer", "--debate-rounds", "0",
+                "--profile", "fast",
                 "-o", "json",
             ],
         )
         manifest = json.loads(result.stdout)
         logs_dir = Path(manifest["logs_dir"])
         (logs_dir / "results").mkdir(exist_ok=True)
-        (logs_dir / "results" / "p1-spec-reviewer-v1.md").write_text(
+        task_id = manifest["tasks"][0]["task_id"]
+        (logs_dir / "results" / f"{task_id}.md").write_text(
             VERDICT_JSON_UNSATISFIED, encoding="utf-8"
         )
         result = runner.invoke(

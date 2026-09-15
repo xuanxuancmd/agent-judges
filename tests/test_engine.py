@@ -128,6 +128,7 @@ class TestProgressiveFlow:
         assert state.verdict.escalate_to_human is False  # 0.92 >= 0.8
         result = build_result(state)
         assert result.stability_degraded is True
+        assert result.conformity_warnings == []  # early stop = no Phase 3
         route = build_route_decision(state)
         assert route.profile == "fast"
         assert route.early_stopped is True
@@ -238,6 +239,8 @@ class TestProgressiveFlow:
         result = build_result(state)
         assert len(result.debate_rounds) == 2
         assert len(result.individual_verdicts) == 3
+        # build_result must propagate conformity_warnings from RunState
+        assert result.conformity_warnings == state.conformity_warnings
         # meta synthesis draws from the blind finals (same canned text)
         assert state.meta_verdict is not None
         assert state.meta_verdict.severity == Severity.MAJOR

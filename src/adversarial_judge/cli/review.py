@@ -19,6 +19,7 @@ from ..llm.credentials import env_api_key, is_host_provider
 from ..meta_review import MetaReviewer
 from ..output import render_json, render_markdown
 from ..reviewer import ReviewerRegistry
+from ..router import filter_by_scene, infer_scene_from_filename
 from . import app
 from .review_flow import FlowError, FlowRequest, load_review_content, resolve_flow
 
@@ -46,8 +47,9 @@ def review(
         "--profile",
         help="预设档位: fast/standard/thorough。不指定且无细粒度参数时走 auto 路由",
     ),
-    reviewers: list[str] | None = typer.Option(
-        None, "--reviewer", "-r", help="指定 reviewer 名称(可多次;支持 skill:<name> 即席加载)"
+    scene: str = typer.Option(
+        None, "--scene", "-s",
+        help="审查场景: document(文档) / code(代码) / review-report(检视报告)。不指定时按后缀判断(.py→code, .md→document)"
     ),
     reviewers_dir: Path = typer.Option(
         Path("reviewers"), "--reviewers-dir", help="reviewer 定义目录"
@@ -148,7 +150,7 @@ def review(
             filename=content_file.name if content_file else None,
             context=context,
             profile=profile,
-            reviewers=reviewers,
+            scene=scene,
             debate_rounds=debate_rounds,
             review_depth=review_depth,
             meta_review=meta_review,
@@ -191,22 +193,22 @@ def review(
     available = [
         r.name for r in registry.list_all() if not r.name.startswith("meta-")
     ]
-    if registry.skills is not None:
-        # skills are routable as ad-hoc reviewers (skill:<name>)
-        available += [f"skill:{s.name}" for s in registry.skills.list_all()]
 
     filename = content_file.name if content_file else None
+    effective_scene = scene or infer_scene_from_filename(filename)
+    # filter available by scene
+    available = filter_by_scene(
+        available, {r.name: r.scenes for r in registry.list_all()}, effective_scene
+    )
 
     try:
         flow = resolve_flow(
             FlowRequest(
-                reviewers=reviewers,
+                scene=effective_scene,
                 debate_rounds=debate_rounds,
                 review_depth=review_depth,
                 profile=profile,
-                review_content=review_content,
                 available=available,
-                filename=filename,
             ),
         )
     except FlowError as e:
@@ -241,6 +243,7 @@ def review(
             filename=filename,
             candidates=available,
             max_tier="thorough" if not meta_missing else "standard",
+            scene=effective_scene,
         )
         route_decision = prog.to_route_decision()
         review_depth = prog.review_depth

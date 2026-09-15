@@ -1,10 +1,10 @@
 """Tests for graphify evidence collection (active verification).
 
 These tests mock subprocess and shutil.which to verify:
-1. graphify absent → silent skip (returns None)
-2. content not code-like → skip (returns None)
+1. non-code scene → skip (returns None)
+2. graphify absent → silent skip (returns None)
 3. graph file missing → skip (returns None)
-4. graphify available + code content + graph exists → evidence injected
+4. graphify available + code scene + graph exists → evidence injected
 5. enrich_context appends evidence to existing context
 6. enrich_context with no existing context returns evidence as context
 7. engine prepare_progressive/prepare_fixed inject evidence into state.context
@@ -21,7 +21,6 @@ import pytest
 from adversarial_judge.evidence import (
     collect_graphify_evidence,
     enrich_context,
-    _is_code_like,
 )
 from adversarial_judge.engine import prepare_progressive, prepare_fixed
 from adversarial_judge.run_state import Stage
@@ -68,50 +67,32 @@ def _make_config(name="test-reviewer"):
 
 
 # ---------------------------------------------------------------------------
-# _is_code_like
-# ---------------------------------------------------------------------------
-
-
-class TestIsCodeLike:
-    def test_code_filename(self):
-        assert _is_code_like("anything", "engine.py") is True
-
-    def test_ts_filename(self):
-        assert _is_code_like("anything", "app.tsx") is True
-
-    def test_prose_filename(self):
-        assert _is_code_like("anything", "spec.md") is False
-
-    def test_code_keywords_in_content(self):
-        assert _is_code_like(CODE_CONTENT, None) is True
-
-    def test_prose_content(self):
-        assert _is_code_like(PROSE_CONTENT, None) is False
-
-    def test_empty_content(self):
-        assert _is_code_like("", None) is False
-
-
-# ---------------------------------------------------------------------------
 # collect_graphify_evidence — skip conditions
 # ---------------------------------------------------------------------------
 
 
 class TestCollectGraphifyEvidenceSkip:
-    def test_graphify_not_on_path(self):
-        with patch("adversarial_judge.evidence.shutil.which", return_value=None):
-            result = collect_graphify_evidence(CODE_CONTENT, "engine.py")
+    def test_non_code_scene_skips(self):
+        # scene="document" → graphify not activated, returns None immediately
+        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
+            result = collect_graphify_evidence(
+                CODE_CONTENT, "engine.py", scene="document"
+            )
         assert result is None
 
-    def test_content_not_code_like(self):
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
-            result = collect_graphify_evidence(PROSE_CONTENT, "spec.md")
+    def test_graphify_not_on_path(self):
+        with patch("adversarial_judge.evidence.shutil.which", return_value=None):
+            result = collect_graphify_evidence(
+                CODE_CONTENT, "engine.py", scene="code"
+            )
         assert result is None
 
     def test_graph_file_missing(self, tmp_path):
         with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
             result = collect_graphify_evidence(
-                CODE_CONTENT, "engine.py", graph_path=tmp_path / "graph.json"
+                CODE_CONTENT, "engine.py",
+                scene="code",
+                graph_path=tmp_path / "graph.json",
             )
         assert result is None
 
@@ -134,7 +115,11 @@ class TestCollectGraphifyEvidenceSuccess:
 
         with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
              patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
-            result = collect_graphify_evidence(CODE_CONTENT, "engine.py", graph_path=graph_file)
+            result = collect_graphify_evidence(
+                CODE_CONTENT, "engine.py",
+                scene="code",
+                graph_path=graph_file,
+            )
 
         assert result is not None
         assert "代码结构证据" in result
@@ -152,7 +137,11 @@ class TestCollectGraphifyEvidenceSuccess:
 
         with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
              patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
-            result = collect_graphify_evidence(CODE_CONTENT, "engine.py", graph_path=graph_file)
+            result = collect_graphify_evidence(
+                CODE_CONTENT, "engine.py",
+                scene="code",
+                graph_path=graph_file,
+            )
 
         assert result is None
 
@@ -163,7 +152,11 @@ class TestCollectGraphifyEvidenceSuccess:
 
         with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
              patch("adversarial_judge.evidence.subprocess.run", side_effect=subprocess.TimeoutExpired("graphify", 15)):
-            result = collect_graphify_evidence(CODE_CONTENT, "engine.py", graph_path=graph_file)
+            result = collect_graphify_evidence(
+                CODE_CONTENT, "engine.py",
+                scene="code",
+                graph_path=graph_file,
+            )
 
         assert result is None
 
@@ -179,7 +172,11 @@ class TestCollectGraphifyEvidenceSuccess:
 
         with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
              patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
-            result = collect_graphify_evidence(CODE_CONTENT, "engine.py", graph_path=graph_file)
+            result = collect_graphify_evidence(
+                CODE_CONTENT, "engine.py",
+                scene="code",
+                graph_path=graph_file,
+            )
 
         assert result is None
 
@@ -196,7 +193,11 @@ class TestCollectGraphifyEvidenceSuccess:
             })()
             with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
                  patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
-                result = collect_graphify_evidence(CODE_CONTENT, "engine.py", graph_path=graph_file)
+                result = collect_graphify_evidence(
+                    CODE_CONTENT, "engine.py",
+                    scene="code",
+                    graph_path=graph_file,
+                )
             assert result is None, f"Should return None for stdout containing '{error_pattern}'"
 
 
@@ -208,12 +209,25 @@ class TestCollectGraphifyEvidenceSuccess:
 class TestEnrichContext:
     def test_no_evidence_returns_original_context(self):
         with patch("adversarial_judge.evidence.shutil.which", return_value=None):
-            result = enrich_context(CODE_CONTENT, "existing context", "engine.py")
+            result = enrich_context(
+                CODE_CONTENT, "existing context", "engine.py", scene="code"
+            )
         assert result == "existing context"
 
     def test_no_evidence_no_context_returns_none(self):
         with patch("adversarial_judge.evidence.shutil.which", return_value=None):
-            result = enrich_context(CODE_CONTENT, None, "engine.py")
+            result = enrich_context(CODE_CONTENT, None, "engine.py", scene="code")
+        assert result is None
+
+    def test_non_code_scene_returns_original_context(self):
+        # scene="document" → no graphify, context unchanged
+        result = enrich_context(
+            CODE_CONTENT, "existing context", "engine.py", scene="document"
+        )
+        assert result == "existing context"
+
+    def test_non_code_scene_no_context_returns_none(self):
+        result = enrich_context(CODE_CONTENT, None, "engine.py", scene="document")
         assert result is None
 
     def test_evidence_appended_to_existing_context(self, tmp_path):
@@ -228,7 +242,11 @@ class TestEnrichContext:
 
         with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
              patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
-            result = enrich_context(CODE_CONTENT, "base context", "engine.py", graph_path=graph_file)
+            result = enrich_context(
+                CODE_CONTENT, "base context", "engine.py",
+                scene="code",
+                graph_path=graph_file,
+            )
 
         assert result is not None
         assert "base context" in result
@@ -247,7 +265,11 @@ class TestEnrichContext:
 
         with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
              patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
-            result = enrich_context(CODE_CONTENT, None, "engine.py", graph_path=graph_file)
+            result = enrich_context(
+                CODE_CONTENT, None, "engine.py",
+                scene="code",
+                graph_path=graph_file,
+            )
 
         assert result is not None
         assert "代码结构证据" in result
@@ -260,7 +282,8 @@ class TestEnrichContext:
 
 class TestEngineEvidenceInjection:
     def test_prepare_progressive_injects_evidence(self, tmp_path):
-        """prepare_progressive should enrich context with graphify evidence."""
+        """prepare_progressive should enrich context with graphify evidence
+        when scene='code'."""
         graph_dir = tmp_path / ".graph"
         graph_dir.mkdir()
         graph_file = graph_dir / "graph.json"
@@ -283,6 +306,7 @@ class TestEngineEvidenceInjection:
                 filename="engine.py",
                 configs=configs,
                 available=["test-reviewer"],
+                scene="code",
             )
 
         assert state.context is not None
@@ -300,13 +324,32 @@ class TestEngineEvidenceInjection:
                 filename="engine.py",
                 configs=configs,
                 available=["test-reviewer"],
+                scene="code",
             )
 
         # context unchanged — no evidence appended
         assert state.context == "original context"
 
+    def test_prepare_progressive_skips_for_document_scene(self):
+        """prepare_progressive should not inject evidence for document scene."""
+        configs = {"test-reviewer": _make_config()}
+
+        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
+            state, tasks = prepare_progressive(
+                content=PROSE_CONTENT,
+                context="original context",
+                filename="spec.md",
+                configs=configs,
+                available=["test-reviewer"],
+                scene="document",
+            )
+
+        # document scene: no evidence, context unchanged
+        assert state.context == "original context"
+
     def test_prepare_fixed_injects_evidence(self, tmp_path):
-        """prepare_fixed should enrich context with graphify evidence."""
+        """prepare_fixed should enrich context with graphify evidence
+        when scene='code'."""
         graph_dir = tmp_path / ".graph"
         graph_dir.mkdir()
         graph_file = graph_dir / "graph.json"
@@ -331,13 +374,14 @@ class TestEngineEvidenceInjection:
                 panel=["test-reviewer"],
                 debate_rounds=1,
                 review_depth=0,
+                scene="code",
             )
 
         assert state.context is not None
         assert "代码结构证据" in state.context
 
-    def test_prepare_fixed_skips_prose_content(self):
-        """prepare_fixed should not inject evidence for prose documents."""
+    def test_prepare_fixed_skips_for_document_scene(self):
+        """prepare_fixed should not inject evidence for document scene."""
         configs = {"test-reviewer": _make_config()}
 
         with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
@@ -349,7 +393,8 @@ class TestEngineEvidenceInjection:
                 panel=["test-reviewer"],
                 debate_rounds=1,
                 review_depth=0,
+                scene="document",
             )
 
-        # prose content: no evidence, context unchanged
+        # document scene: no evidence, context unchanged
         assert state.context == "original context"

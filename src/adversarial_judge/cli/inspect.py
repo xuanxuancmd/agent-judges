@@ -43,7 +43,8 @@ def list_reviewers(
     for r in registry.list_all():
         model_str = r.model or "(用默认模型)"
         skills_str = f" [skills: {','.join(r.skills)}]" if r.skills else ""
-        typer.echo(f"  {r.name:40s} [{model_str}]{skills_str}  {r.description}")
+        scenes_str = f" [scenes: {','.join(r.scenes)}]" if r.scenes else ""
+        typer.echo(f"  {r.name:40s} [{model_str}]{skills_str}{scenes_str}  {r.description}")
 
 
 @app.command("list-skills")
@@ -52,7 +53,7 @@ def list_skills(
         Path("skills"), "--skills-dir", help="审查 skill 目录"
     ),
 ):
-    """列出所有可用的审查 skill(可通过 -r skill:<name> 即席加载)"""
+    """列出所有可用的审查 skill(可通过 reviewer MD 的 skills: 字段引用)"""
     try:
         registry = SkillRegistry(skills_dir)
     except FileNotFoundError as e:
@@ -62,15 +63,14 @@ def list_skills(
         checklist_str = f" ({len(s.checklist)} 项 checklist)" if s.checklist else ""
         typer.echo(f"  {s.name:40s}  {s.description}{checklist_str}")
     _echo_err(
-        "\n用法: agent-judges review --llm litellm -r skill:<name> 直接加载,或在 reviewer MD 中通过"
-        " skills: [<name>] 引用"
+        "\n用法: 在 reviewer MD 中通过 skills: [<name>] 引用"
     )
 
 
 @app.command("inspect-reviewer")
 def inspect_reviewer(
     name: str = typer.Argument(
-        ..., help="reviewer 名称(支持 skill:<name> 即席形式)"
+        ..., help="reviewer 名称"
     ),
     reviewers_dir: Path = typer.Option(
         Path("reviewers"), "--reviewers-dir", help="reviewer 定义目录"

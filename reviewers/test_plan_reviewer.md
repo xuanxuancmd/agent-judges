@@ -1,6 +1,7 @@
 ---
 name: test-plan-reviewer
 description: 审查测试计划文档,检查需求覆盖、负面场景、验收标准可执行性
+scenes: [document]
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 checklist:
   - criteria: 每条需求都有对应的测试验证方式
