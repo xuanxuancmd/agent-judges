@@ -2,6 +2,7 @@
 name: documentation-reviewer
 description: 审查AI产出的文档(API文档/README),检查与实现一致性、可读性、可操作性
 scenes: [document]
+reasoning_strategy: checklist
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 checklist:
   - criteria: 文档与实现(或自身)一致无矛盾

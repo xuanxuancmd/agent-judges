@@ -25,6 +25,7 @@ from .consensus import (
     compute_stability,
     detect_conformity,
     failed_verdict,
+    infer_skepticism,
     synthesize_verdict,
 )
 from .debate import DebateResult
@@ -103,7 +104,8 @@ def prepare_progressive(
     pool = filter_by_scene(
         available, {n: c.scenes for n, c in configs.items()}, scene
     )
-    panel = deterministic_panel(pool, PROFILE_MAP["thorough"]["reviewers"])
+    strategies = {n: c.reasoning_strategy or "checklist" for n, c in configs.items()}
+    panel = deterministic_panel(pool, PROFILE_MAP["thorough"]["reviewers"], strategies)
     state = RunState(
         content=content,
         context=context,
@@ -310,7 +312,7 @@ def _on_final(
     ids = {n: f"fin-{n}" for n in state.panel}
     pending = [n for n, i in ids.items() if i not in results]
     if pending:
-        return state, _emit_final(state)
+        return state, _emit_final(state, configs)
 
     finals = [_verdict_from(results[ids[n]], n, "blind final") for n in state.panel]
     for n, v in zip(state.panel, finals):
@@ -454,7 +456,7 @@ def _emit_phase1(
     for n in names:
         cfg = configs[n]
         votes = max(1, state.majority_votes.get(n, 1))
-        system = build_system_prompt(cfg.system_prompt)
+        system = build_system_prompt(cfg.system_prompt, cfg.reasoning_strategy)
         user = build_judge_prompt(state.content, cfg.checklist, state.context)
         prompt = _full_prompt(system, user)
         kind = (
@@ -478,6 +480,9 @@ def _emit_debate_round(
     state: RunState, configs: dict[str, ReviewerConfig], round_index: int
 ) -> _TaskList:
     tasks: _TaskList = []
+    # Auto-infer skepticism from Phase-1 signals (落地项 3)
+    individual = [state.individual[n] for n in state.panel if n in state.individual]
+    skepticism = infer_skepticism(individual)
     for i, n in enumerate(state.panel):
         cfg = configs[n]
         others = "\n".join(
@@ -485,7 +490,7 @@ def _emit_debate_round(
             for j in range(len(state.panel))
             if j != i
         )
-        system = build_debate_system_prompt(cfg.system_prompt)
+        system = build_debate_system_prompt(cfg.system_prompt, skepticism)
         user = build_debate_user_prompt(state.content, others)
         prompt = _full_prompt(system, user)
         tasks.append(
@@ -525,7 +530,7 @@ def _emit_meta(
             continue
         cfg = configs[n]
         votes = max(1, state.majority_votes.get(n, 1))
-        system = build_system_prompt(cfg.system_prompt)
+        system = build_system_prompt(cfg.system_prompt, cfg.reasoning_strategy)
         user = build_judge_prompt(meta_content, cfg.checklist, state.context)
         prompt = _full_prompt(system, user)
         for k in range(1, votes + 1):
@@ -554,7 +559,7 @@ def _emit_meta_debate(
             for j in range(len(state.meta_names))
             if j != i
         )
-        system = build_debate_system_prompt(cfg.system_prompt)
+        system = build_debate_system_prompt(cfg.system_prompt, 0.7)
         user = build_debate_user_prompt(meta_content, others)
         prompt = _full_prompt(system, user)
         tasks.append(

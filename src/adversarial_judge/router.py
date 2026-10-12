@@ -128,12 +128,53 @@ def generic_reviewer_combo(available: list[str], count: int) -> list[str]:
     return pool[:count]
 
 
-def deterministic_panel(available: list[str], size: int) -> list[str]:
+def deterministic_panel(
+    available: list[str],
+    size: int,
+    strategies: dict[str, str] | None = None,
+) -> list[str]:
     """Select ``size`` reviewers from a (scene-pre-filtered) pool.
 
     ``panel[0]`` is the sentinel — the progressive flow relies on this
     for the sentinel-first run. The pool is expected to be already
     filtered by scene by the caller.
+
+    Reasoning-strategy diversity (落地项 2): when ``strategies`` maps
+    reviewer names to their ``reasoning_strategy``, the filler slots
+    (panel[1:]) are greedily filled to maximize strategy diversity —
+    at least 2 distinct strategies when ``size >= 2``. Unknown or
+    missing strategies default to ``"checklist"``.
     """
     panel = generic_reviewer_combo(available, len(available))
-    return panel[:size]
+    if size <= 1 or strategies is None:
+        return panel[:size]
+
+    # Greedy diversity fill: sentinel is panel[0], then prefer strategies
+    # not yet represented in the panel.
+    selected: list[str] = [panel[0]]
+    used = {_strategy_of(panel[0], strategies)}
+
+    # First pass: prefer reviewers whose strategy is not yet used
+    for name in panel[1:]:
+        if len(selected) >= size:
+            break
+        strat = _strategy_of(name, strategies)
+        if strat not in used:
+            selected.append(name)
+            used.add(strat)
+
+    # Second pass: fill remaining slots from the pool order
+    for name in panel[1:]:
+        if len(selected) >= size:
+            break
+        if name not in selected:
+            selected.append(name)
+
+    return selected[:size]
+
+
+def _strategy_of(name: str, strategies: dict[str, str] | None) -> str:
+    """Get the reasoning strategy for a reviewer, defaulting to checklist."""
+    if strategies is None:
+        return "checklist"
+    return strategies.get(name, "checklist")

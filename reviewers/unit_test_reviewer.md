@@ -2,6 +2,7 @@
 name: unit-test-reviewer
 description: 审查AI生成的单元测试代码,检查需求路径覆盖、边界场景、断言有效性
 scenes: [code]
+reasoning_strategy: falsification
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 checklist:
   - criteria: 每条需求的正常路径有测试覆盖

@@ -2,6 +2,7 @@
 name: implementation-vs-requirement-reviewer
 description: 审查AI生成代码是否满足需求规格(非代码质量review)
 scenes: [code]
+reasoning_strategy: inverse
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 checklist:
   - criteria: 每条需求都有对应的代码实现

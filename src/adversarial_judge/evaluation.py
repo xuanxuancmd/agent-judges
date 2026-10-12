@@ -32,6 +32,7 @@ __all__ = [
     "mean_confidence",
     "load_judgement_records",
     "format_evaluation_report",
+    "recommend_threshold",
 ]
 
 Pair = Tuple[int, float]  # (is_correct, confidence)
@@ -183,3 +184,46 @@ def accuracy(pairs: List[Pair]) -> float:
 
 def mean_confidence(pairs: List[Pair]) -> float:
     return sum(conf for _, conf in pairs) / len(pairs) if pairs else 0.0
+
+
+def recommend_threshold(pairs: List[Pair]) -> float:
+    """Recommend an escalation threshold from calibration data (落地项 4).
+
+    Uses Youden's J statistic (TPR − FPR) to find the confidence
+    threshold that best separates correct from incorrect verdicts.
+    NeurIPS 2024 shows that prompting alone is insufficient for
+    calibration — this function lets the user calibrate the threshold
+    against historical (is_correct, confidence) pairs via
+    ``agent-judges evaluate --recommend-threshold``.
+
+    Returns the default ``0.8`` when there is insufficient data.
+    """
+    if not pairs:
+        return 0.8
+
+    positives = sum(label for label, _ in pairs)
+    negatives = len(pairs) - positives
+    if positives == 0 or negatives == 0:
+        return 0.8
+
+    # Collect candidate thresholds: unique confidence values
+    candidates = sorted(set(conf for _, conf in pairs))
+
+    best_j = -1.0
+    best_threshold = 0.8
+
+    for threshold in candidates:
+        tp = sum(1 for label, conf in pairs if conf >= threshold and label == 1)
+        fp = sum(1 for label, conf in pairs if conf >= threshold and label == 0)
+        fn = sum(1 for label, conf in pairs if conf < threshold and label == 1)
+        tn = sum(1 for label, conf in pairs if conf < threshold and label == 0)
+
+        tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+        j = tpr - fpr
+
+        if j > best_j:
+            best_j = j
+            best_threshold = threshold
+
+    return round(best_threshold, 4)

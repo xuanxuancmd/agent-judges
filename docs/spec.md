@@ -12,13 +12,7 @@
 
 所有 AI 产出的东西都需要被另一个(组)AI **对抗审查**一遍。这不是代码 review(不审查代码风格、模式、性能),而是对 **AI 产出物本身的可靠性**进行多视角、可对抗、可量化的审计。
 
-### 1.3 为什么需要独立系统
-
-- 现有工具(Claude Code、Codex 等)内置的 review 能力是**单 agent、单视角**的,不可靠
-- 需要一个**通用、可配置、可对抗**的审查层,横跨 AI 介入的所有环节
-- 审查结果本身也是 AI 产出,**同样不可靠**,需要可被再次审查(元审查)
-
-### 1.4 宿主集成立场
+### 1.3 宿主集成立场
 
 系统以**宿主 agent 生态成员**形态交付:入口为宿主内 `judge-manager` 实体 Agent,reviewer 为宿主实体 Agent,LLM 能力(模型/凭证/额度)全部来自宿主已有配置——用户零模型配置。主路径对宿主的依赖仅限三项公共能力(Agent 定义文件 / 原生 subagent 拉起 / shell),**不引入宿主专有的 headless CLI**(详见 FR-3/FR-5/FR-10/FR-11 与 NFR-7)。
 
@@ -28,28 +22,27 @@
 
 本系统审查的是 **AI 在软件开发各环节的产出物**,不限于也不特指代码。审查范围按软件开发管线分两大阶段组,每组覆盖多个子环节的产出物:
 
-### 2.1 需求分析各环节
+### 2.1 需求分析与设计阶段
 
-| 子阶段 | 产出物 | 审查焦点(非 code review) |
-|---|---|---|
-| 需求收集 | 原始需求列表 | 完整性(是否遗漏干系人需求)、来源可追溯 |
-| 需求澄清 | 澄清后需求文档 | 歧义是否消除、假设是否记录 |
-| 需求分解 | 需求层次结构 | 分解粒度是否合理、MECE 性 |
-| 需求优先级 | 优先级排序 | 排序依据是否充分、MoSCoW 合理性 |
-| 需求验收标准 | 验收标准清单 | 可测试性、完整性 |
-| 规格文档(spec) | 规格文档 | 需求→规格可追溯性、接口契约完整性、边界条件覆盖、验收标准可测试性 |
-| 设计文档 | 设计文档 | 设计是否覆盖所有需求、技术风险是否消解、方案选择是否有依据 |
+| 产出物 | 审查焦点(非 code review) |
+|---|---|
+| 规格文档(spec) | 需求→规格可追溯性、接口契约完整性、边界条件覆盖、验收标准可测试性、歧义消除(模糊词已量化)、关键假设已记录、需求分解 MECE 性、非功能需求可量化 |
+| 设计文档 | 设计是否覆盖所有需求(含非功能需求)、技术风险是否消解、方案选择是否有对比依据、组件接口与数据流自洽、失败模式与异常路径有设计 |
 
-### 2.2 代码生成后各环节
+> **注**:需求收集(原始输入)、需求澄清、需求分解、需求优先级排序是需求分析**过程中的活动**,产出物最终合入规格文档。本系统审查的是**产出物**(规格文档/设计文档),不审查分析过程。spec-reviewer 的 checklist 已覆盖歧义消除、MECE 分解、验收标准可测试性等维度。
 
-| 子阶段 | 产出物 | 审查焦点(非 code review) |
-|---|---|---|
-| 实现对照规格 | 代码 vs spec 对照 | 需求覆盖度、逻辑一致性、边界处理 |
-| 单元测试 | 测试代码 | 是否覆盖需求路径、边界场景、断言有效性 |
-| 集成测试 | 集成测试方案 | 接口契约验证、场景覆盖 |
-| 部署配置 | Dockerfile/IaC | 配置与需求一致性、安全基线 |
-| 文档 | API 文档/README | 与实现一致性、可读性 |
-| 测试计划 | 测试计划文档 | 是否覆盖每条需求、负面场景是否齐、验收标准是否可执行 |
+### 2.2 代码生成后各阶段产出物
+
+| 产出物 | 审查焦点(非 code review) |
+|---|---|
+| 实现代码 vs spec 对照 | 需求覆盖度、逻辑一致性、边界处理 |
+| 单元测试代码 | 断言有效性(非"不抛异常")、需求路径覆盖、mock 合理性、测试独立性 |
+| 集成测试方案/代码 | 接口契约验证(含错误分支)、超时/重试/幂等验证、环境策略 |
+| 部署配置(Dockerfile/IaC) | 配置与需求一致性、安全基线(非 root、版本标签、secret 管理) |
+| API 文档/README | 与实现一致性、示例可运行性、参数/错误码完整性 |
+| 测试计划文档 | 是否覆盖每条需求、负面场景齐备、验收标准可执行 |
+
+> **注**:上述各产出物是代码生成后**不同类型的文件**,由不同 reviewer 模板审查。其中**实现对照规格**是核心(审查代码是否满足需求),其余审查的是各自的产出物质量(测试代码审查测试有效性,部署配置审查安全基线,文档审查一致性)。用户传入不同文件时,引擎按 `--scene` 路由到匹配的 reviewer。
 
 > **注**: "AI 生成的代码"的审查焦点是 **实现是否满足需求/规格**(非代码质量)——需求覆盖度、逻辑一致性、边界处理。本系统**不做**代码风格、命名规范、设计模式、性能微优化等传统 code review 工作(见 2.4 明确排除)。
 
@@ -90,6 +83,10 @@
 | 9 | **通用管道接入** | 任意文本产出物,三种输入方式(`--content` / `--file` / stdin 管道)。不依赖文件系统路径或特定数据结构 |
 | 10 | **纯 LLM 范式 + 可选证据注入** | 轻依赖(litellm/pydantic/typer/yaml),不绑代码 workspace。reviewer 不执行工具,但审查代码产出物时可通过 graphify 图谱证据注入获得代码结构上下文。graphify 不存在时静默降级为纯 LLM 模式 |
 | 11 | **主动验证(graphify 证据注入)** | 审查代码产出物时,引擎在调 reviewer 前自动从本地 graphify 知识图谱收集代码结构证据(调用链、依赖关系、跨文件引用),注入 reviewer prompt 的 context 部分。reviewer 仍为纯 LLM,但 prompt 里多了代码结构证据,能验证 finding 是否与代码实际结构一致。替代 AaaJ 的 tree-sitter/BM25/embedding 工具层,无需自建 |
+| 12 | **辩论溯源标记(错误级联防御)** | Phase 2 对抗辩论中,每条引用他人主张须标注认知状态三态标记:`[✓已确认]`/`[✗已反驳]`/`[?未验证]`。不带标记的引用视为无效反驳;`[?未验证]`主张不得作为调整 severity/confidence 的依据。conformity 检测在 Phase 3 检查是否有人基于未验证主张改变了立场。防御"一条幻觉主张在 3 轮内感染全部 reviewer"的级联风险 |
+| 13 | **推理策略多样性** | 每个 reviewer 模板在 frontmatter 声明 `reasoning_strategy`(checklist/inverse/transform/counterfactual/falsification),系统在 system prompt 中注入对应推理策略指引。引擎的 `deterministic_panel` 贪心选择确保面板内至少 2 种不同推理策略。打破"所有 reviewer 共享同一推理范式、共享同一盲区"的问题(DMAD, ICLR 2025) |
+| 14 | **自动辩论强度(auto agreement intensity)** | Phase 2 辩论的质疑强度由 Phase 1 实测信号自动推断:发现 critical 或 reviewer 严重分歧 → 高质疑(0.9);全员一致且仅 minor → 低质疑(0.4)快速收敛;其余 → 中等(0.7)。零外部配置,用户无需调参 |
+| 15 | **三级行动决策(green/yellow/red)** | Verdict 输出三级行动决策:`green`(置信度 ≥ 0.9 且 severity ≤ minor 且全部 finding 有修复建议 → AI 可自行修复)、`yellow`(置信度足够但存在 major 问题 → 需人工确认修复方案)、`red`(置信度不足或 critical → 必须人工介入)。judge-manager 按级别分级汇报,人工介入时提供完整审查报告+元审查校准结果+流程审计信息 |
 
 ---
 
@@ -145,6 +142,9 @@ JSON Verdict 核心字段:
     "confidence": 0.65,
     "calibrated_confidence": 0.455,
     "escalate_to_human": true,
+    "auto_fix_eligible": false,
+    "action_level": "red",
+    "action_reasoning": "置信度 0.46 < 阈值 0.8,需人工介入",
     "findings": [
       {"description": "...", "severity": "major", "confidence": 0.72,
        "evidence": "原文引用", "suggestion": "改进建议"}
@@ -319,6 +319,28 @@ JSON Verdict 核心字段:
 - **reviewer 侧零改动**:证据以文本形式存在于 prompt context,reviewer 无感知证据来源,仍是纯 LLM
 - **替代 AaaJ 工具层**:替代 DevGraph/DevLocate/DevRead/DevCodeSearch 四模块(代码结构证据),不替代 DevTextRetrieve(轨迹评估,需 agent 执行日志)
 
+### FR-13: 辩论溯源标记与自动辩论强度
+
+- **溯源标记(Phase 2 辩论)**:reviewer 在辩论中引用他人主张时,必须标注认知状态三态标记:`[✓已确认]`(在被审查内容中验证)、`[✗已反驳]`(在被审查内容中发现不成立)、`[?未验证]`(无法确认或反驳)。不带标记的引用视为无效反驳;`[?未验证]`主张不得作为调整 severity/confidence 的依据
+- **自动辩论强度**:Phase 2 的质疑强度由 Phase 1 实测信号自动推断——发现 critical 或 reviewer 严重分歧(consensus < 0.5)→ 高质疑(0.9);全员一致且仅 minor/pass → 低质疑(0.4)快速收敛;其余 → 中等(0.7)。**零外部配置,用户无需调参**
+- **溯源违规检测**:conformity 检测在 Phase 3 检查 reviewer 是否基于 `[?未验证]` 主张改变了立场,如发现则发出审计警告
+
+### FR-14: 推理策略多样性
+
+- reviewer 模板在 frontmatter 声明 `reasoning_strategy` 字段,可选值:checklist(默认,逐条核对)/ inverse(逆向验证)/ transform(变换表示)/ counterfactual(反事实推演)/ falsification(对抗性证伪)
+- 系统在 system prompt 的 persona 与审查框架之间注入推理策略指引,指导 reviewer 使用不同的认知路径
+- 引擎的 `deterministic_panel` 贪心选择确保面板内至少包含 2 种不同推理策略(当面板 ≥ 2 人时),打破"所有 reviewer 共享同一推理范式"的盲区
+- 用户自定义模板可不声明 `reasoning_strategy`,默认为 checklist
+
+### FR-15: 三级行动决策
+
+- Verdict 输出 `action_level`(green/yellow/red)和 `action_reasoning`,决定审查结果如何指导行动:
+  - **GREEN**(`auto_fix_eligible: true`):有效置信度 ≥ auto_fix_confidence(默认 0.9)且 severity ≤ minor 且全部 finding 有非空 suggestion → AI 可自行修复。judge-manager 向用户汇报并建议直接修复,用户确认后由原始产出 AI 按 suggestion 执行
+  - **YELLOW**:有效置信度 ≥ 阈值(默认 0.8)但存在 major 问题或部分 finding 缺 suggestion → 需人工确认修复方案。judge-manager 汇报全部 findings 和修复建议
+  - **RED**(`escalate_to_human: true`):有效置信度 < 阈值或 severity = critical → 必须人工介入。judge-manager 汇报完整审查报告、元审查校准结果、流程审计信息(route/consensus/stability/conformity)
+- 有效置信度使用 `calibrated_confidence`(经元审查校准)优先,否则用原始 confidence
+- **阈值校准**:`agent-judges evaluate --recommend-threshold` 基于历史审查数据,用 Youden's J 统计量推荐最优 escalation 阈值,替代硬编码 0.8
+
 ---
 
 ## 6. 非功能性需求
@@ -373,6 +395,7 @@ reviewer 通过 Markdown 文件定义(`reviewers/*.md`):YAML frontmatter + perso
 | `name` | 唯一标识(slug 格式) |
 | `description` | 一句话描述 |
 | `model` | 可选,宿主命名空间(claude 系 `opus`/`sonnet`;opencode 系 `provider/model`)。省略 = 宿主默认模型 |
+| `reasoning_strategy` | 可选,推理策略(checklist/inverse/transform/counterfactual/falsification)。省略 = checklist。系统据此注入推理策略指引,引擎确保面板内推理策略多样性 |
 | `weight` | 聚合权重(默认 1.0) |
 | `majority_vote` | 同模型多次调用投票数(默认 1,>1 时启用多数投票) |
 | `skills` | 知识包引用列表(可选) |
@@ -396,27 +419,21 @@ skill frontmatter 可携带 `checklist` 字段,支持即席加载时作为检查
 
 ### 7.3 内置模板清单
 
-| 模板 | 覆盖场景 |
-|---|---|
-| `requirement-elicitation-reviewer` | 需求收集 |
-| `requirement-clarification-reviewer` | 需求澄清(歧义消除、假设记录) |
-| `requirement-decomposition-reviewer` | 需求分解(MECE) |
-| `requirement-prioritization-reviewer` | 需求优先级(MoSCoW) |
-| `requirement-acceptance-reviewer` | 验收标准(可测试性) |
-| `spec-reviewer` | 规格文档 |
-| `design-reviewer` | 设计文档(opus) |
-| `implementation-vs-requirement-reviewer` | 实现对照需求 |
-| `unit-test-reviewer` | 单元测试 |
-| `integration-test-reviewer` | 集成测试 |
-| `test-plan-reviewer` | 测试计划 |
-| `deployment-config-reviewer` | 部署配置(Dockerfile/IaC) |
-| `documentation-reviewer` | 文档(API 文档/README) |
-| `external-code-review-auditor` | 外部代码检视报告审查 |
-| `process-compliance-reviewer` | 过程合规(agent 日志) |
-| `deception-detector` | 欺骗检测(claim vs 证据) |
-| `dangerous-operation-scanner` | 危险操作扫描(引用 skill) |
-| `meta-reviewer` | 元审查(Claude) |
-| `meta-reviewer-2` | 元审查(GPT-4o,异构对抗) |
+| 模板 | scenes | 覆盖场景 |
+|---|---|---|
+| `spec-reviewer` | document | 规格文档（完整性、可追溯性、契约、歧义消除、MECE、验收标准可测试性） |
+| `design-reviewer` | document | 设计文档（架构决策、风险消解、失败模式） |
+| `test-plan-reviewer` | document | 测试计划（测试分层、回归策略、数据环境） |
+| `documentation-reviewer` | document | 文档（API 文档/README，示例可运行性、参数完整性） |
+| `deception-detector` | document, review-report | 欺骗检测 + 过程合规（claim vs 证据、执行痕迹） |
+| `implementation-vs-requirement-reviewer` | code | 代码是否满足需求（非代码风格） |
+| `unit-test-reviewer` | code | 单元测试（断言有效性、mock 合理性、测试独立性） |
+| `integration-test-reviewer` | code | 集成测试（接口契约、超时/重试/幂等、环境策略） |
+| `deployment-config-reviewer` | code | 部署配置（Dockerfile/IaC 安全基线、可运维性） |
+| `dangerous-operation-scanner` | code | 危险操作扫描（引用 dangerous-operations skill） |
+| `external-code-review-auditor` | review-report | 外部代码检视报告审查（覆盖度、误报、漏报） |
+| `meta-reviewer` | —（系统内部） | 元审查 |
+| `meta-reviewer-2` | —（系统内部） | 元审查（异构对抗） |
 
 ### 7.4 内置 skill 清单
 

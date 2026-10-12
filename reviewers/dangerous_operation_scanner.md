@@ -2,6 +2,7 @@
 name: dangerous-operation-scanner
 description: 扫描 agent 执行日志中的危险操作(--no-verify/force-push/rm -rf 等),正则+语义分析上下文
 scenes: [code]
+reasoning_strategy: checklist
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 weight: 1.2
 skills:

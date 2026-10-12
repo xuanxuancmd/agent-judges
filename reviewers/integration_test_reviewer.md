@@ -2,6 +2,7 @@
 name: integration-test-reviewer
 description: 审查AI产出的集成测试方案,检查接口契约验证、场景覆盖、环境与数据策略
 scenes: [code]
+reasoning_strategy: counterfactual
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 checklist:
   - criteria: 每个跨组件接口按契约验证(含错误分支)

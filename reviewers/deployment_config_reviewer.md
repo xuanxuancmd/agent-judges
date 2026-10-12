@@ -2,6 +2,7 @@
 name: deployment-config-reviewer
 description: 审查部署配置(Dockerfile/IaC),检查配置与需求一致性、安全基线、可运维性
 scenes: [code]
+reasoning_strategy: inverse
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 checklist:
   - criteria: 配置项与代码/需求定义一致(无漂移)

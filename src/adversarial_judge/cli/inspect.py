@@ -103,4 +103,4 @@ def inspect_reviewer(
     for item in config.checklist:
         typer.echo(f"#   - {item.criteria}")
     typer.echo("")
-    typer.echo(build_system_prompt(config.system_prompt))
+    typer.echo(build_system_prompt(config.system_prompt, config.reasoning_strategy))

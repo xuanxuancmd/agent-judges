@@ -379,3 +379,150 @@ class TestPromptBuilders:
                 "findings: [{description, severity: critical/major/minor, "
                 "confidence, evidence, suggestion}]" in prompt
             )
+
+
+class TestProvenanceTagging:
+    """落地项 1: Phase 2 debate prompts carry tri-state provenance tags."""
+
+    def test_debate_system_prompt_contains_provenance_instructions(self):
+        from adversarial_judge.prompts.debate import build_debate_system_prompt
+
+        prompt = build_debate_system_prompt("你是测试审查者。")
+        assert "[✓已确认]" in prompt
+        assert "[✗已反驳]" in prompt
+        assert "[?未验证]" in prompt
+        assert "不带认知状态标记的引用对方观点,视为无效反驳" in prompt
+        assert "[?未验证]的主张不得作为你调整自己severity或confidence的依据" in prompt
+
+    def test_debate_user_prompt_labels_content_as_verification_source(self):
+        from adversarial_judge.prompts.debate import build_debate_user_prompt
+
+        prompt = build_debate_user_prompt("被审查内容", "他人观点")
+        assert "被审查内容(请据此验证他人主张)" in prompt
+
+    def test_conformity_detects_unverified_provenance(self):
+        """A reviewer whose final reasoning contains [?未验证] is flagged."""
+        ind = make_verdict(Severity.MAJOR, satisfied=False)
+        fin = make_verdict(Severity.PASS, satisfied=True)
+        fin.reasoning = "基于[?未验证]的主张调整了判断"
+        warnings = detect_conformity([ind], [fin])
+        assert any("[?未验证]" in w for w in warnings)
+
+    def test_conformity_no_unverified_no_provenance_warning(self):
+        """A reviewer whose reasoning has no [?未验证] → no provenance warning."""
+        ind = make_verdict(Severity.MAJOR, satisfied=False)
+        fin = make_verdict(Severity.PASS, satisfied=True)
+        fin.reasoning = "基于确凿证据调整了判断"
+        warnings = detect_conformity([ind], [fin])
+        assert all("[?未验证]" not in w for w in warnings)
+
+
+class TestAgreementIntensity:
+    """落地项 3: auto-inferred skepticism from Phase-1 signals."""
+
+    def test_infer_skepticism_critical_severity(self):
+        from adversarial_judge.consensus import infer_skepticism
+
+        verdicts = [make_verdict(Severity.CRITICAL, confidence=0.9, satisfied=False)]
+        assert infer_skepticism(verdicts) == 0.9
+
+    def test_infer_skepticism_low_consensus(self):
+        from adversarial_judge.consensus import infer_skepticism
+
+        verdicts = [
+            make_verdict(Severity.PASS, confidence=0.9, satisfied=True),
+            make_verdict(Severity.MAJOR, confidence=0.7, satisfied=False),
+        ]
+        assert infer_skepticism(verdicts) == 0.85
+
+    def test_infer_skepticism_full_consensus_minor(self):
+        from adversarial_judge.consensus import infer_skepticism
+
+        verdicts = [
+            make_verdict(Severity.MINOR, confidence=0.9, satisfied=True),
+            make_verdict(Severity.MINOR, confidence=0.9, satisfied=True),
+        ]
+        assert infer_skepticism(verdicts) == 0.4
+
+    def test_infer_skepticism_default_moderate(self):
+        from adversarial_judge.consensus import infer_skepticism
+
+        verdicts = [
+            make_verdict(Severity.MAJOR, confidence=0.8, satisfied=False),
+            make_verdict(Severity.MAJOR, confidence=0.7, satisfied=False),
+        ]
+        assert infer_skepticism(verdicts) == 0.7
+
+    def test_infer_skepticism_empty_returns_default(self):
+        from adversarial_judge.consensus import infer_skepticism
+
+        assert infer_skepticism([]) == 0.7
+
+    def test_debate_prompt_high_skepticism(self):
+        from adversarial_judge.prompts.debate import build_debate_system_prompt
+
+        prompt = build_debate_system_prompt("你是审查者。", skepticism=0.9)
+        assert "保持高度怀疑" in prompt
+
+    def test_debate_prompt_low_skepticism(self):
+        from adversarial_judge.prompts.debate import build_debate_system_prompt
+
+        prompt = build_debate_system_prompt("你是审查者。", skepticism=0.3)
+        assert "优先寻找与其他审查者的共识点" in prompt
+
+    def test_debate_prompt_default_moderate(self):
+        from adversarial_judge.prompts.debate import build_debate_system_prompt
+
+        prompt = build_debate_system_prompt("你是审查者。")
+        assert "对其他审查者不同意的发现进行反驳" in prompt
+
+
+class TestReasoningStrategy:
+    """落地项 2: reasoning strategy injection + diversity-aware panel."""
+
+    def test_system_prompt_injects_strategy(self):
+        from adversarial_judge.prompts.judge_system import build_system_prompt
+
+        prompt = build_system_prompt("你是审查者。", reasoning_strategy="inverse")
+        assert "[推理策略 — inverse]" in prompt
+        assert "假设它是必要的" in prompt
+
+    def test_system_prompt_injects_transform_strategy(self):
+        from adversarial_judge.prompts.judge_system import build_system_prompt
+
+        prompt = build_system_prompt("你是审查者。", reasoning_strategy="transform")
+        assert "[推理策略 — transform]" in prompt
+
+    def test_system_prompt_no_strategy_no_injection(self):
+        from adversarial_judge.prompts.judge_system import build_system_prompt
+
+        prompt = build_system_prompt("你是审查者。")
+        assert "[推理策略" not in prompt
+
+    def test_system_prompt_unknown_strategy_no_injection(self):
+        from adversarial_judge.prompts.judge_system import build_system_prompt
+
+        prompt = build_system_prompt("你是审查者。", reasoning_strategy="unknown")
+        assert "[推理策略" not in prompt
+
+    def test_deterministic_panel_prefers_diverse_strategies(self):
+        from adversarial_judge.router import deterministic_panel
+
+        available = ["a", "b", "c", "d"]
+        strategies = {
+            "a": "checklist",
+            "b": "checklist",
+            "c": "transform",
+            "d": "falsification",
+        }
+        panel = deterministic_panel(available, 3, strategies)
+        assert panel[0] == "a"  # sentinel is always first
+        # The second pick should prefer a different strategy
+        panel_strategies = {strategies.get(n, "checklist") for n in panel}
+        assert len(panel_strategies) >= 2
+
+    def test_deterministic_panel_no_strategies_fallback(self):
+        from adversarial_judge.router import deterministic_panel
+
+        panel = deterministic_panel(["a", "b", "c"], 2)
+        assert len(panel) == 2

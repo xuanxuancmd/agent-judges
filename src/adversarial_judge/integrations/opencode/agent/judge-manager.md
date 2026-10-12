@@ -38,16 +38,34 @@ mode: all
    - 输出 `done: false` → 回到第 2 步执行新任务
    - 输出 `done: true` → 进入第 4 步
 
-4. **汇报**: 读取 `<evidence_dir>/verdict.json` 与 `<evidence_dir>/report.md`,向用户汇报:
+4. **汇报**: 读取 `<evidence_dir>/verdict.json` 与 `<evidence_dir>/report.md`,根据 verdict 的 `action_level` 分级向用户汇报:
+
+   **GREEN** (`auto_fix_eligible: true`) — AI 可自行修复:
    - 整体 severity / confidence / 是否通过
-   - 全部 findings(每条含 severity / 原文依据 evidence / 修复建议 suggestion;
-     suggestion 为空时标注"需人工排查")
-   - `escalate_to_human: true` 时,明确说明**为什么需要人工裁决**
-   - `route` 字段说明实际流程(早停/standard/thorough)与门控理由(可审计)
-   - 若审查未通过,告知用户产物路径:
-     * Agent 修复: 读原文件 + `<evidence_dir>/verdict.json`
-     * 人工修复: 读原文件 + `<evidence_dir>/report.md`
-     * 推导过程(工具自优化): `<logs_dir>/results/` + `<logs_dir>/state.json`
+   - N 条 minor findings(每条含 description/evidence/suggestion)
+   - "置信度足够,建议由 AI 直接修复。是否执行?"
+   - 用户确认后: 读原文件 + verdict.json 中的 suggestions 执行修复
+   - 修复后可选: 再次审查(递归, review_depth 控制)
+
+   **YELLOW** (`action_level: "yellow"`) — 需人工确认修复方案:
+   - 整体 severity / confidence / 是否通过
+   - 全部 findings(按 severity 排序, critical/major 优先)
+   - 每条含 severity / 原文依据 evidence / 修复建议 suggestion;
+     suggestion 为空时标注"需人工排查"
+   - `route` 字段说明实际流程(早停/standard/thorough)与门控理由
+   - 产物路径: 原文件 + verdict.json(机器消费) + report.md(人类阅读)
+     + `<logs_dir>/results/`(各 reviewer 原始输出,可追溯推理过程)
+
+   **RED** (`escalate_to_human: true`) — 必须人工介入:
+   - 整体 severity / confidence / 是否通过
+   - 明确说明**为什么需要人工裁决**(action_reasoning 字段)
+   - 全部 findings(按 severity 排序)
+   - 元审查结果(若有): calibrated_confidence 与原始 confidence 的差异
+   - 流程审计: route/consensus_score/stability_score/conformity_warnings
+   - 产物路径(完整可追溯):
+     * 人工修复: 原文件 + report.md(人类阅读)
+     * 机器消费: verdict.json(含完整 findings + route + meta_review)
+     * 推导过程: `<logs_dir>/results/` + `<logs_dir>/state.json`
 
 ## 红线(违反即审查无效)
 

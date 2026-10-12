@@ -59,6 +59,7 @@ class ReviewerConfig(BaseModel):
     scenes: list[str] = []
     temperature: float | None = None
     max_output_tokens: int | None = None
+    reasoning_strategy: str | None = None  # 落地项 2: checklist/inverse/transform/counterfactual/falsification
 
     @field_validator("name")
     @classmethod

@@ -2,6 +2,7 @@
 name: external-code-review-auditor
 description: 审查外部代码检视报告的覆盖度、误报率、severity 合理性
 scenes: [review-report]
+reasoning_strategy: falsification
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 weight: 1.2
 checklist:

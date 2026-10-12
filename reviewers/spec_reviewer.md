@@ -2,6 +2,7 @@
 name: spec-reviewer
 description: 审查需求与规格文档,检查需求完整性、可追溯性、契约完整性和一致性
 scenes: [document]
+reasoning_strategy: checklist
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 checklist:
   - criteria: 每条需求可追溯到具体规格条目

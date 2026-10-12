@@ -21,6 +21,10 @@
     --line-strong: #c4c4ba;
     --seal: #a63d2f;
     --seal-soft: #f7ece9;
+    --green: #2d6a4f;
+    --green-soft: #e8f5ee;
+    --yellow: #8a6d1b;
+    --yellow-soft: #faf5e6;
     --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
     --mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
   }
@@ -81,6 +85,7 @@
   }
   .toc a:hover { color: var(--seal); }
   .toc .t-no { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .toc .t-new { font-family: var(--mono); font-size: 9px; color: var(--seal); font-weight: 600; }
   .meta-card { background: var(--panel); border: 1px solid var(--line); padding: 18px 18px 8px; }
   .meta-card dl { display: grid; grid-template-columns: 64px 1fr; row-gap: 0; }
   .meta-card dt {
@@ -114,6 +119,11 @@
   .article-head .art-no {
     font-family: var(--mono); font-size: 12px; font-weight: 600;
     color: var(--seal); letter-spacing: 0.1em;
+  }
+  .article-head .art-badge {
+    font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+    color: var(--seal); border: 1px solid var(--seal); padding: 2px 6px;
+    letter-spacing: 0.1em; text-transform: uppercase;
   }
   .article-head h2 { font-size: 24px; font-weight: 900; line-height: 1.4; }
   .article-lede { font-size: 13.5px; color: var(--ink-3); margin-bottom: 24px; }
@@ -176,6 +186,26 @@
   }
   .stamp small { display: block; font-size: 10px; font-weight: 500; letter-spacing: 0.22em; }
 
+  /* ---------- action tiers ---------- */
+  .tiers { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; margin-top: 8px; }
+  .tier { border: 1px solid var(--line); padding: 18px 20px 16px; position: relative; }
+  .tier + .tier { border-left: none; }
+  .tier-green { background: var(--green-soft); border-color: var(--green); }
+  .tier-green .t-tag { color: var(--green); }
+  .tier-yellow { background: var(--yellow-soft); border-color: var(--yellow); }
+  .tier-yellow .t-tag { color: var(--yellow); }
+  .tier-red { background: var(--seal-soft); border-color: var(--seal); }
+  .tier-red .t-tag { color: var(--seal); }
+  .tier .t-tag {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  .tier .t-title { font-weight: 700; font-size: 15px; margin-top: 6px; }
+  .tier .t-cond { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 8px; }
+  .tier ul { list-style: none; margin-top: 8px; }
+  .tier li { font-size: 12.5px; color: var(--ink-2); padding: 3px 0; padding-left: 12px; position: relative; }
+  .tier li::before { content: "·"; position: absolute; left: 2px; color: var(--ink-3); }
+
   /* ---------- evidence json ---------- */
   .evidence {
     background: #1e1e1b; padding: 22px 26px; margin-top: 8px;
@@ -193,6 +223,8 @@
   .en { color: #d9b96e; }
   .eb { color: #e89a8e; font-weight: 600; }
   .ec { color: #6e6e64; }
+  .eg { color: #8ec89a; }
+  .ey { color: #d9c97a; }
 
   /* ---------- flowchart ---------- */
   .fc-wrap { overflow-x: auto; margin-top: 4px; }
@@ -202,6 +234,9 @@
   .fc-strong { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
   .fc-gate { fill: var(--paper); stroke: var(--seal); stroke-width: 1.5; }
   .fc-tag { fill: var(--seal-soft); stroke: var(--seal); stroke-width: 1; }
+  .fc-green { fill: var(--green-soft); stroke: var(--green); stroke-width: 1; }
+  .fc-yellow { fill: var(--yellow-soft); stroke: var(--yellow); stroke-width: 1; }
+  .fc-red { fill: var(--seal-soft); stroke: var(--seal); stroke-width: 1; }
   .fc-edge { stroke: var(--ink-2); stroke-width: 1.2; fill: none; }
   .fc-title { font-family: var(--sans); font-size: 15px; font-weight: 700; fill: var(--ink); }
   .fc-title-s { font-family: var(--sans); font-size: 13px; font-weight: 700; fill: var(--ink); }
@@ -213,6 +248,8 @@
   .fc-phase { font-family: var(--mono); font-size: 12px; font-weight: 700; fill: var(--seal); }
   .fc-phase-sub { font-family: var(--mono); font-size: 10px; font-weight: 500; fill: var(--ink-3); }
   .fc-seal { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: var(--seal); }
+  .fc-green-t { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: var(--green); }
+  .fc-yellow-t { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: var(--yellow); }
   .fc-dot { fill: var(--ink-3); }
 
   /* ---------- definition rows ---------- */
@@ -223,7 +260,9 @@
   }
   .def .d-t { font-weight: 700; font-size: 14.5px; line-height: 1.6; }
   .def .d-t span { display: block; font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--ink-3); letter-spacing: 0.1em; margin-top: 2px; }
+  .def .d-t .new-badge { display: inline; font-family: var(--mono); font-size: 9px; color: var(--seal); border: 1px solid var(--seal); padding: 1px 4px; margin-left: 6px; letter-spacing: 0.06em; }
   .def p { font-size: 13.5px; color: var(--ink-2); max-width: 700px; line-height: 1.75; }
+  .def p strong { color: var(--ink); }
 
   /* ---------- footer ---------- */
   .sheet-foot {
@@ -242,6 +281,8 @@
     .main, .docket-head, .sheet-foot { padding-left: 32px; padding-right: 32px; }
     .calib { grid-template-columns: 1fr; }
     .stamp { justify-self: start; }
+    .tiers { grid-template-columns: 1fr; }
+    .tier + .tier { border-left: 1px solid var(--line); border-top: none; }
   }
   @media (max-width: 620px) {
     body { padding: 12px 8px 40px; }
@@ -257,12 +298,12 @@
 
   <header class="docket-head">
     <div class="docket-meta">
-      <span class="no">Capability Dossier · <b>NO. AJ-CAP-001</b></span>
-      <span>Adversarial Review System · 2026-09 · zh-CN</span>
+      <span class="no">Capability Dossier · <b>NO. AJ-CAP-002</b></span>
+      <span>Adversarial Review System · 2026-10 · zh-CN</span>
     </div>
     <h1>agent-judges 能力案卷<br><span>对 AI 产出的对抗式审查</span></h1>
     <p class="sub">
-      本案卷摘要 <strong>agent-judges(adversarial-judge)</strong> 的设计立场、审查流程与关键技术点,
+      本案卷摘要 <strong>agent-judges(adversarial-judge)</strong> 的设计立场、审查流程、关键技术点与行动决策全景,
       供评估其作为<strong>质量关卡</strong>的能力边界。全部条款均为已实现行为,非规划中的设想。
     </p>
   </header>
@@ -276,18 +317,20 @@
         <li><a href="#s1"><span class="t-no">01</span>立场</a></li>
         <li><a href="#s2"><span class="t-no">02</span>流程</a></li>
         <li><a href="#s3"><span class="t-no">03</span>技术要点</a></li>
-        <li><a href="#s4"><span class="t-no">04</span>边界与渊源</a></li>
+        <li><a href="#s4"><span class="t-no">04</span>行动决策全景</span> <span class="t-new">NEW</span></a></li>
+        <li><a href="#s5"><span class="t-no">05</span>边界与渊源</a></li>
       </ul>
       <p class="r-label">登记 Metadata</p>
       <div class="meta-card">
         <dl>
           <dt>形态</dt><dd>CLI + 宿主 Agent</dd>
-          <dt>面板</dt><dd>异构多模型</dd>
+          <dt>面板</dt><dd>异构多模型 · 多推理策略</dd>
           <dt>扩展</dt><dd>MD 模板 + SKILL.md</dd>
           <dt>输入</dt><dd>文件 · 文本 · 管道</dd>
           <dt>依赖</dt><dd>轻量(litellm 等)</dd>
           <dt>许可</dt><dd>MIT</dd>
           <dt>渊源</dt><dd>AaaJ · ICML 2025</dd>
+          <dt>版本</dt><dd>v2 · 2026-10</dd>
         </dl>
       </div>
     </aside>
@@ -298,14 +341,14 @@
         <span class="a-tag">摘要 Abstract</span>
         <p>
           agent-judges 是一套 <strong>AI 产出物审计系统</strong>:由确定性引擎驱动多名互相挑战的
-          reviewer,对需求文档、规格、设计、测试计划乃至外部检视报告等一切 AI 产出进行
-          <strong>四阶段对抗辩论</strong>,并输出带量化置信度、可人工升级的裁决。
+          reviewer,对规格文档、设计文档、实现代码、测试代码、部署配置、API 文档乃至外部检视报告等一切 AI 产出进行
+          <strong>四阶段对抗辩论</strong>,并输出带量化置信度、三级行动决策(green/yellow/red)、可人工升级的裁决。
         </p>
         <p>
           立项前提为:<strong>单 agent 审查不可靠</strong>——幻觉、遗漏、过度自信是其结构性缺陷。
           系统的全部设计,均由这一前推导出。
         </p>
-        <p class="kw">关键词:对抗审查 · 确定性编排 · 渐进门控 · 主动验证 · 元审查校准 · 置信度升级</p>
+        <p class="kw">关键词:对抗审查 · 确定性编排 · 渐进门控 · 溯源标记 · 推理策略多样性 · 自动辩论强度 · 元审查校准 · 三级行动决策</p>
       </section>
 
       <section class="article" id="s1">
@@ -347,14 +390,14 @@
           <span class="c-no">1.5</span>
           <div>
             <p class="c-tt">高置信自主,低置信交人。</p>
-            <p>每条 finding 与整体裁决均携带量化置信度;校准值低于阈值,自动标记 <span class="m">escalate_to_human</span>。系统目标不是替代人,而是把人力只用在判不动的地方。</p>
+            <p>每条 finding 与整体裁决均携带量化置信度;系统输出三级行动决策——<strong>green</strong>(AI 可自行修复)、<strong>yellow</strong>(需人工确认方案)、<strong>red</strong>(必须人工介入)。系统目标不是替代人,而是把人力只用在判不动的地方。</p>
           </div>
         </div>
         <div class="clause">
           <span class="c-no">1.6</span>
           <div>
             <p class="c-tt">审查对象是产出物,不是执行轨迹。</p>
-            <p>覆盖软件开发全管线交付物:需求、规格、设计、实现对照、测试计划、部署配置、文档、外部检视报告。不含代码风格等传统 code review 范畴(见第四条)。</p>
+            <p>覆盖软件开发全管线交付物:规格文档、设计文档、实现对照、单元测试、集成测试、部署配置、文档、测试计划、外部检视报告。需求收集(原始输入)不在审查范围;需求澄清/分解/优先级等过程活动的产出合入规格文档,由 spec-reviewer 统一覆盖。不含代码风格等传统 code review 范畴(见第五条)。</p>
           </div>
         </div>
       </section>
@@ -364,11 +407,11 @@
           <span class="art-no">第二条</span>
           <h2>流程</h2>
         </div>
-        <p class="article-lede">零参数调用时的完整程序:两道纯规则门 + 图谱证据收集 + 四阶段辩论 + 可选元审查。</p>
+        <p class="article-lede">零参数调用时的完整程序:两道纯规则门 + 图谱证据收集 + 四阶段辩论(含溯源标记与自动辩论强度) + 可选元审查 + 三级行动决策。</p>
 
-        <p class="sub-h">2.1 端到端流程 · 两道门 × 四阶段</p>
+        <p class="sub-h">2.1 端到端流程 · 两道门 × 四阶段 × 三级决策</p>
         <div class="fc-wrap">
-          <svg viewBox="0 0 640 950" role="img" aria-label="agent-judges 端到端审查流程图:输入经哨兵先行与早停门,进入 reviewer 并行独立评审,对抗辩论,盲评终判,裁决合成,经续跑强度门决定是否元审查,输出 verdict 与报告,低置信时人工升级" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 640 1020" role="img" aria-label="agent-judges 端到端审查流程图" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <marker id="fcArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
                 <path d="M 0 0 L 10 5 L 0 10 Z" fill="#55554f"></path>
@@ -408,10 +451,10 @@
             <text class="fc-phase-sub" x="162" y="378" text-anchor="end">独立评审</text>
             <rect class="fc-box" x="170" y="348" width="130" height="44"></rect>
             <text class="fc-title-s" x="235" y="367" text-anchor="middle">reviewer 1</text>
-            <text class="fc-sub" x="235" y="383" text-anchor="middle">claude</text>
+            <text class="fc-sub" x="235" y="383" text-anchor="middle">策略: checklst</text>
             <rect class="fc-box" x="340" y="348" width="130" height="44"></rect>
             <text class="fc-title-s" x="405" y="367" text-anchor="middle">reviewer 2</text>
-            <text class="fc-sub" x="405" y="383" text-anchor="middle">gpt-4o</text>
+            <text class="fc-sub" x="405" y="383" text-anchor="middle">策略: transform</text>
             <circle class="fc-dot" cx="492" cy="370" r="3"></circle>
             <circle class="fc-dot" cx="504" cy="370" r="3"></circle>
             <circle class="fc-dot" cx="516" cy="370" r="3"></circle>
@@ -422,53 +465,95 @@
             <line class="fc-edge" x1="320" y1="410" x2="320" y2="426" marker-end="url(#fcArr)"></line>
 
             <text class="fc-phase" x="162" y="456" text-anchor="end">P2</text>
-            <rect class="fc-box" x="180" y="428" width="280" height="48"></rect>
+            <rect class="fc-box" x="180" y="428" width="280" height="56"></rect>
             <text class="fc-title" x="320" y="449" text-anchor="middle">对抗辩论</text>
-            <text class="fc-sub" x="320" y="466" text-anchor="middle">阅他人观点逐条反驳 · 1–3 轮</text>
+            <text class="fc-sub" x="320" y="466" text-anchor="middle">溯源标记 [✓已确认]/[✗已反驳]/[?未验证]</text>
+            <text class="fc-sub" x="320" y="478" text-anchor="middle">质疑强度自动适配 · 1–3 轮</text>
 
-            <line class="fc-edge" x1="320" y1="476" x2="320" y2="500" marker-end="url(#fcArr)"></line>
+            <line class="fc-edge" x1="320" y1="484" x2="320" y2="508" marker-end="url(#fcArr)"></line>
 
-            <text class="fc-phase" x="162" y="530" text-anchor="end">P3</text>
-            <rect class="fc-box" x="180" y="502" width="280" height="48"></rect>
-            <text class="fc-title" x="320" y="523" text-anchor="middle">盲评终判</text>
-            <text class="fc-sub" x="320" y="540" text-anchor="middle">辩论后独立终判 · 互不可见</text>
+            <text class="fc-phase" x="162" y="538" text-anchor="end">P3</text>
+            <rect class="fc-box" x="180" y="510" width="280" height="48"></rect>
+            <text class="fc-title" x="320" y="531" text-anchor="middle">盲评终判</text>
+            <text class="fc-sub" x="320" y="548" text-anchor="middle">辩论后独立终判 · 溯源违规检测</text>
 
-            <line class="fc-edge" x1="320" y1="550" x2="320" y2="574" marker-end="url(#fcArr)"></line>
+            <line class="fc-edge" x1="320" y1="558" x2="320" y2="582" marker-end="url(#fcArr)"></line>
 
-            <text class="fc-phase" x="162" y="604" text-anchor="end">P4</text>
-            <rect class="fc-box" x="180" y="576" width="280" height="48"></rect>
-            <text class="fc-title" x="320" y="597" text-anchor="middle">裁决合成</text>
-            <text class="fc-sub" x="320" y="614" text-anchor="middle">severity 取最严 · 置信度加权</text>
+            <text class="fc-phase" x="162" y="612" text-anchor="end">P4</text>
+            <rect class="fc-box" x="180" y="584" width="280" height="48"></rect>
+            <text class="fc-title" x="320" y="605" text-anchor="middle">裁决合成</text>
+            <text class="fc-sub" x="320" y="622" text-anchor="middle">severity 取最严 · 置信度加权</text>
 
-            <line class="fc-edge" x1="320" y1="624" x2="320" y2="650" marker-end="url(#fcArr)"></line>
+            <line class="fc-edge" x1="320" y1="632" x2="320" y2="658" marker-end="url(#fcArr)"></line>
 
-            <polygon class="fc-gate" points="320,652 450,708 320,764 190,708"></polygon>
-            <text class="fc-gtitle" x="320" y="702" text-anchor="middle">G2 · 续跑强度门</text>
-            <text class="fc-gsub" x="320" y="720" text-anchor="middle">critical / 加权置信偏低?</text>
+            <polygon class="fc-gate" points="320,660 450,716 320,772 190,716"></polygon>
+            <text class="fc-gtitle" x="320" y="710" text-anchor="middle">G2 · 续跑强度门</text>
+            <text class="fc-gsub" x="320" y="728" text-anchor="middle">critical / 加权置信偏低?</text>
 
-            <line class="fc-edge" x1="450" y1="708" x2="476" y2="708" marker-end="url(#fcArr)"></line>
-            <text class="fc-lab-seal" x="462" y="698" text-anchor="middle">深审</text>
-            <rect class="fc-box" x="478" y="686" width="152" height="44"></rect>
-            <text class="fc-title-s" x="554" y="706" text-anchor="middle">元审查 + 校准</text>
-            <text class="fc-sub" x="554" y="723" text-anchor="middle">≥2 meta-reviewer</text>
-            <path class="fc-edge" d="M 554 730 L 554 866 L 462 866" marker-end="url(#fcArr)"></path>
+            <line class="fc-edge" x1="450" y1="716" x2="476" y2="716" marker-end="url(#fcArr)"></line>
+            <text class="fc-lab-seal" x="462" y="706" text-anchor="middle">深审</text>
+            <rect class="fc-box" x="478" y="694" width="152" height="44"></rect>
+            <text class="fc-title-s" x="554" y="714" text-anchor="middle">元审查 + 校准</text>
+            <text class="fc-sub" x="554" y="731" text-anchor="middle">≥2 meta-reviewer</text>
+            <path class="fc-edge" d="M 554 738 L 554 874 L 462 874" marker-end="url(#fcArr)"></path>
 
-            <line class="fc-edge" x1="320" y1="764" x2="320" y2="838" marker-end="url(#fcArr)"></line>
-            <text class="fc-lab" x="330" y="804" text-anchor="start">常规</text>
+            <line class="fc-edge" x1="320" y1="772" x2="320" y2="846" marker-end="url(#fcArr)"></line>
+            <text class="fc-lab" x="330" y="812" text-anchor="start">常规</text>
 
-            <rect class="fc-strong" x="180" y="840" width="280" height="54"></rect>
-            <text class="fc-title" x="320" y="863" text-anchor="middle">输出 verdict + 报告</text>
-            <text class="fc-sub" x="320" y="881" text-anchor="middle">route 字段 · 全程可复盘</text>
+            <rect class="fc-strong" x="180" y="848" width="280" height="54"></rect>
+            <text class="fc-title" x="320" y="871" text-anchor="middle">行动决策</text>
+            <text class="fc-sub" x="320" y="889" text-anchor="middle">3 级: green / yellow / red</text>
 
-            <line class="fc-edge" x1="320" y1="894" x2="320" y2="908" marker-end="url(#fcArr)"></line>
+            <line class="fc-edge" x1="320" y1="902" x2="320" y2="916" marker-end="url(#fcArr)"></line>
 
-            <rect class="fc-tag" x="170" y="910" width="300" height="30"></rect>
-            <text class="fc-seal" x="320" y="929" text-anchor="middle">置信 &lt; 阈值 → escalate_to_human 人工升级</text>
+            <!-- 3-tier action boxes -->
+            <rect class="fc-green" x="60" y="918" width="165" height="60"></rect>
+            <text class="fc-green-t" x="142" y="940" text-anchor="middle">GREEN</text>
+            <text class="fc-sub" x="142" y="957" text-anchor="middle">AI 可自行修复</text>
+            <text class="fc-sub" x="142" y="970" text-anchor="middle">置信 ≥ 0.9 · ≤ minor</text>
+
+            <rect class="fc-yellow" x="237" y="918" width="165" height="60"></rect>
+            <text class="fc-yellow-t" x="319" y="940" text-anchor="middle">YELLOW</text>
+            <text class="fc-sub" x="319" y="957" text-anchor="middle">需人工确认方案</text>
+            <text class="fc-sub" x="319" y="970" text-anchor="middle">存在 major 问题</text>
+
+            <rect class="fc-red" x="414" y="918" width="165" height="60"></rect>
+            <text class="fc-seal" x="496" y="940" text-anchor="middle">RED</text>
+            <text class="fc-sub" x="496" y="957" text-anchor="middle">必须人工介入</text>
+            <text class="fc-sub" x="496" y="970" text-anchor="middle">置信 &lt; 0.8 · critical</text>
           </svg>
         </div>
         <p class="fc-note">两道门均为<strong>纯规则门</strong>,零 LLM 预分类:G1 决定早停;G2 依据 Phase 1 实测信号(severity / 置信 / 共识)决定续跑强度——<span class="m">standard</span>(1 轮辩论)或 <span class="m">thorough</span>(2 轮辩论 + 元审查)。哨兵结论保留计入面板;完整路径记录于 verdict 的 route 字段,可复盘。</p>
+        <p class="fc-note"><strong>Phase 2 辩论</strong>中,reviewer 引用他人主张须标注溯源标记(<span class="m">[✓已确认]</span> / <span class="m">[✗已反驳]</span> / <span class="m">[?未验证]</span>),不带标记的引用视为无效反驳。质疑强度由 Phase 1 信号自动推断——critical 或分歧大 → 高质疑(0.9);全员一致且 minor → 低质疑(0.4)快速收敛。</p>
 
-        <p class="sub-h">2.2 主动验证 · 图谱证据收集(审查代码类产出时)</p>
+        <p class="sub-h">2.2 审查范围与场景路由</p>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead>
+              <tr><th>场景</th><th>产出物</th><th>reviewer 来源</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>document</td>
+                <td>规格文档、设计文档、测试计划、API 文档/README</td>
+                <td>spec-reviewer · design-reviewer · test-plan-reviewer · documentation-reviewer</td>
+              </tr>
+              <tr>
+                <td>code</td>
+                <td>实现代码、单元测试、集成测试、部署配置(Dockerfile/IaC)</td>
+                <td>implementation-vs-requirement · unit-test · integration-test · deployment-config · dangerous-operation-scanner</td>
+              </tr>
+              <tr>
+                <td>review-report</td>
+                <td>外部代码检视报告(SonarQube/ESLint/人工 review)</td>
+                <td>external-code-review-auditor · deception-detector</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="fc-note">需求收集(原始输入)不在审查范围;需求澄清/分解/优先级等过程活动的产出合入规格文档,由 spec-reviewer 统一覆盖。用户传入不同文件时,引擎按 <span class="m">--scene</span> 路由到匹配的 reviewer 模板。</p>
+
+        <p class="sub-h">2.3 主动验证 · 图谱证据收集(审查代码类产出时)</p>
         <div class="tbl-wrap">
           <table class="tbl">
             <thead>
@@ -491,7 +576,7 @@
           </table>
         </div>
 
-        <p class="sub-h">2.3 强度档位</p>
+        <p class="sub-h">2.4 强度档位</p>
         <div class="tbl-wrap">
           <table class="tbl">
             <thead>
@@ -505,7 +590,7 @@
           </table>
         </div>
 
-        <p class="sub-h">2.4 元审查与置信度校准</p>
+        <p class="sub-h">2.5 元审查与置信度校准</p>
         <div class="calib">
           <div>
             <p>
@@ -515,12 +600,12 @@
             <span class="formula">calibrated = confidence × ( 1 − <span class="pen">meta_penalty</span> )&nbsp;&nbsp;<span style="color:#8f8f86;">// critical 0.5 · major 0.3 · minor 0.1</span></span>
           </div>
           <div class="stamp">
-            escalate_to_human
-            <small>→ 人工裁决</small>
+            校准后判定
+            <small>→ 3 级行动</small>
           </div>
         </div>
 
-        <p class="sub-h">2.5 记录样本 · 机器可读输出(节选)</p>
+        <p class="sub-h">2.6 记录样本 · 机器可读输出(节选)</p>
         <div class="evidence">
           <div class="e-tag">Evidence // verdict.json</div>
 <pre><span class="ek">"verdict"</span>: {
@@ -528,6 +613,9 @@
   <span class="ek">"confidence"</span>: <span class="en">0.65</span>,
   <span class="ek">"calibrated_confidence"</span>: <span class="en">0.455</span>,
   <span class="ek">"escalate_to_human"</span>: <span class="eb">true</span>,
+  <span class="ek">"auto_fix_eligible"</span>: <span class="eb">false</span>,
+  <span class="ek">"action_level"</span>: <span class="ev">"red"</span>,
+  <span class="ek">"action_reasoning"</span>: <span class="ec">"置信度 0.46 &lt; 阈值 0.8,需人工介入"</span>,
   <span class="ek">"findings"</span>: [ <span class="ec">{ 证据引用 · 建议 · 逐条置信度 }</span> ]
 }</pre>
         </div>
@@ -538,7 +626,7 @@
           <span class="art-no">第三条</span>
           <h2>技术要点</h2>
         </div>
-        <p class="article-lede">支撑上述流程的八项已实现能力。</p>
+        <p class="article-lede">支撑上述流程的十二项已实现能力。前八项为原有能力,后四项为本轮新增。</p>
 
         <div class="defs">
           <div class="def">
@@ -551,15 +639,15 @@
           </div>
           <div class="def">
             <div class="d-t">元审查校准<span>META-REVIEW</span></div>
-            <p>审查结果再被审查:≥2 个 meta-reviewer 异构复审,置信度按显式公式校准而非覆盖(见 2.4)。</p>
+            <p>审查结果再被审查:≥2 个 meta-reviewer 异构复审,置信度按显式公式校准而非覆盖(见 2.5)。</p>
           </div>
           <div class="def">
             <div class="d-t">置信度升级路由<span>ESCALATION</span></div>
-            <p>校准置信低于阈值 → escalate_to_human;finding 附证据引用与可执行建议,交人即可裁决。</p>
+            <p>校准置信低于阈值 → 三级行动决策(red/yellow/green);finding 附证据引用与可执行建议,交人即可裁决。</p>
           </div>
           <div class="def">
             <div class="d-t">零代码扩展<span>EXTENSIBLE</span></div>
-            <p>reviewer 用 Markdown 模板定义(persona + checklist),SKILL.md 知识包注入领域 rubric;新增视角不改代码。</p>
+            <p>reviewer 用 Markdown 模板定义(persona + checklist + reasoning_strategy),SKILL.md 知识包注入领域 rubric;新增视角不改代码。</p>
           </div>
           <div class="def">
             <div class="d-t">宿主零配置<span>ZERO-CONFIG HOST</span></div>
@@ -571,7 +659,23 @@
           </div>
           <div class="def">
             <div class="d-t">主动验证 · 图谱证据<span>ACTIVE VERIFICATION</span></div>
-            <p>reviewer 不调工具,但引擎为其预先收集代码结构证据,使每条 finding 可对照代码实际结构验证(见 2.2);以预构建图谱替代 AaaJ 工具层,无需自建。</p>
+            <p>reviewer 不调工具,但引擎为其预先收集代码结构证据,使每条 finding 可对照代码实际结构验证(见 2.3);以预构建图谱替代 AaaJ 工具层,无需自建。</p>
+          </div>
+          <div class="def">
+            <div class="d-t">辩论溯源标记<span>PROVENANCE TAGGING<span class="new-badge">NEW</span></span></div>
+            <p>Phase 2 辩论中,reviewer 引用他人主张须标注三态认知状态:<strong>[✓已确认]</strong>(在被审查内容中验证)、<strong>[✗已反驳]</strong>(发现不成立)、<strong>[?未验证]</strong>(无法确认)。不带标记的引用视为无效反驳;未验证主张不得作为调整 severity/confidence 的依据。防御"一条幻觉主张在 3 轮内感染全部 reviewer"的级联风险(From Spark to Fire, 2026)。</p>
+          </div>
+          <div class="def">
+            <div class="d-t">推理策略多样性<span>STRATEGY DIVERSITY<span class="new-badge">NEW</span></span></div>
+            <p>每个 reviewer 模板在 frontmatter 声明 <strong>reasoning_strategy</strong>(checklist/inverse/transform/counterfactual/falsification),系统在 system prompt 中注入对应推理策略指引。引擎的 deterministic_panel 贪心选择确保面板内至少 2 种不同策略——打破"所有 reviewer 共享同一推理范式、共享同一盲区"(DMAD, ICLR 2025:不同推理方法 per agent >> 不同 persona per agent)。</p>
+          </div>
+          <div class="def">
+            <div class="d-t">自动辩论强度<span>AUTO SKEPTICISM<span class="new-badge">NEW</span></span></div>
+            <p>Phase 2 的质疑强度由 Phase 1 实测信号<strong>自动推断</strong>:发现 critical 或 reviewer 严重分歧(consensus &lt; 0.5)→ 高质疑(0.9);全员一致且仅 minor → 低质疑(0.4)快速收敛;其余 → 中等(0.7)。<strong>零外部配置,用户无需调参</strong>。调节此参数可带来 ~15% 性能波动(Should we be going MAD?, 2024)。</p>
+          </div>
+          <div class="def">
+            <div class="d-t">三级行动决策<span>3-TIER ACTION<span class="new-badge">NEW</span></span></div>
+            <p>Verdict 输出 green/yellow/red 三级,决定审查结果如何指导行动。GREEN 时 AI 可自行修复(置信 ≥ 0.9 且 ≤ minor 且全部有 suggestion);YELLOW 需人工确认方案;RED 必须人工介入。judge-manager 按级别分级汇报,人工介入时提供完整报告+校准结果+流程审计。阈值可通过 <span class="m">evaluate --recommend-threshold</span> 基于历史数据用 Youden's J 校准。</p>
           </div>
         </div>
       </section>
@@ -579,28 +683,165 @@
       <section class="article" id="s4">
         <div class="article-head">
           <span class="art-no">第四条</span>
+          <span class="art-badge">NEW</span>
+          <h2>行动决策全景</h2>
+        </div>
+        <p class="article-lede">审查完成后,系统输出三级行动决策,决定"AI 能不能动""要不需要人确认""必须人工介入"。</p>
+
+        <div class="tiers">
+          <div class="tier tier-green">
+            <div class="t-tag">● GREEN</div>
+            <div class="t-title">AI 可自行修复</div>
+            <div class="t-cond">置信 ≥ 0.9 AND severity ≤ minor AND 全部 finding 有 suggestion</div>
+            <ul>
+              <li>judge-manager 汇报 findings + 建议</li>
+              <li>"置信度足够,建议由 AI 直接修复"</li>
+              <li>用户确认 → 原始产出 AI 按 suggestion 执行</li>
+              <li>修复后可选: 再次审查(递归)</li>
+            </ul>
+          </div>
+          <div class="tier tier-yellow">
+            <div class="t-tag">● YELLOW</div>
+            <div class="t-title">需人工确认修复方案</div>
+            <div class="t-cond">置信 ≥ 0.8 但存在 major 问题,或部分 finding 缺 suggestion</div>
+            <ul>
+              <li>judge-manager 汇报全部 findings(按 severity 排序)</li>
+              <li>每条含 evidence + suggestion(空则标"需人工排查")</li>
+              <li>route 字段说明流程与门控理由</li>
+              <li>用户审阅 → 决定方案 → AI 或人工执行</li>
+            </ul>
+          </div>
+          <div class="tier tier-red">
+            <div class="t-tag">● RED</div>
+            <div class="t-title">必须人工介入</div>
+            <div class="t-cond">置信 &lt; 0.8 OR severity = critical OR 元审查发现 critical 校准问题</div>
+            <ul>
+              <li>明确说明"为什么需要人工"(action_reasoning)</li>
+              <li>全部 findings + 元审查校准结果</li>
+              <li>流程审计: route/consensus/stability/conformity</li>
+              <li>完整产物: report.md + verdict.json + results/</li>
+            </ul>
+          </div>
+        </div>
+
+        <p class="sub-h" style="margin-top: 24px;">什么情况修不了</p>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead>
+              <tr><th>场景</th><th>原因</th><th>为什么 AI 修不了</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>置信度不足</td>
+                <td>reviewer 严重分歧或元审查发现推理缺口</td>
+                <td>AI 自己都没搞清楚问题在哪</td>
+              </tr>
+              <tr>
+                <td>severity = critical</td>
+                <td>问题严重到可能需架构级调整</td>
+                <td>需人工判断: 改文档? 改设计? 改需求?</td>
+              </tr>
+              <tr>
+                <td>元审查 critical</td>
+                <td>原始审查本身有重大漏判</td>
+                <td>不能信任 AI 的 finding,需人工重审</td>
+              </tr>
+              <tr>
+                <td>finding 缺 suggestion</td>
+                <td>发现问题但给不出修复建议</td>
+                <td>人工需自行判断如何修复</td>
+              </tr>
+              <tr>
+                <td>结构性分歧</td>
+                <td>consensus &lt; 0.5,reviewer 根本对立</td>
+                <td>不是修一个 finding 能解决的</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="sub-h">修改的 AI 是谁</p>
+        <p class="fc-note">GREEN 区间下,judge-manager 向用户汇报并建议直接修复。用户确认后,<strong>由原始产出 AI 执行修复</strong>(写文档的那个 agent 最了解上下文)。judge-manager 本身不执行修复——它只输出 verdict + action 建议。这符合系统红线:judge-manager 禁止自行扮演 reviewer 或做流程决策。用户也可选择让另一个 AI 修或自己修,judge-manager 不强制。</p>
+
+        <p class="sub-h">人工介入时提供的信息</p>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead>
+              <tr><th>信息项</th><th>内容</th><th>用途</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>findings 列表</td>
+                <td>按 severity 排序,每条含 description/evidence/severity/confidence/suggestion</td>
+                <td>人工逐条审查和修复</td>
+              </tr>
+              <tr>
+                <td>action_reasoning</td>
+                <td>为什么需要人工(置信度数值 + 阈值对比)</td>
+                <td>快速理解介入原因</td>
+              </tr>
+              <tr>
+                <td>元审查结果</td>
+                <td>calibrated_confidence vs 原始 confidence 的差异;meta-reviewer 的 confidence_adjustment</td>
+                <td>判断原始审查是否可信</td>
+              </tr>
+              <tr>
+                <td>route 字段</td>
+                <td>实际走的流程(哨兵/standard/thorough) + 门控理由</td>
+                <td>审计流程决策是否合理</td>
+              </tr>
+              <tr>
+                <td>consensus / stability</td>
+                <td>reviewer 间一致度 + 辩论前后立场稳定性</td>
+                <td>判断分歧程度</td>
+              </tr>
+              <tr>
+                <td>conformity_warnings</td>
+                <td>附和检测 + 溯源违规检测</td>
+                <td>判断 reviewer 是否被误导</td>
+              </tr>
+              <tr>
+                <td>产物路径</td>
+                <td>report.md(人类阅读) + verdict.json(机器消费) + results/(推理过程) + state.json(状态轨迹)</td>
+                <td>完整可追溯</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="article" id="s5">
+        <div class="article-head">
+          <span class="art-no">第五条</span>
           <h2>边界与渊源</h2>
         </div>
 
         <div class="clause">
-          <span class="c-no">4.1</span>
+          <span class="c-no">5.1</span>
           <div>
             <p class="c-tt">不做传统 code review。</p>
             <p>代码风格、命名规范、设计模式、性能微优化不属本系统职责,由 SonarQube / ESLint / 人工处理。</p>
           </div>
         </div>
         <div class="clause">
-          <span class="c-no">4.2</span>
+          <span class="c-no">5.2</span>
           <div>
             <p class="c-tt">可审查检视工具的产物。</p>
             <p>外部代码检视报告本身是否可靠(覆盖度、误报漏报、定级合理性、建议可执行性)可作为输入被本系统复审。</p>
           </div>
         </div>
         <div class="clause">
-          <span class="c-no">4.3</span>
+          <span class="c-no">5.3</span>
+          <div>
+            <p class="c-tt">不审查需求收集过程。</p>
+            <p>需求收集是原始输入采集,AI 无产出物,不产生幻觉。需求澄清/分解/优先级等过程活动的产出合入规格文档,由 spec-reviewer 统一覆盖(歧义消除、MECE、验收标准可测试性等维度)。</p>
+          </div>
+        </div>
+        <div class="clause">
+          <span class="c-no">5.4</span>
           <div>
             <p class="c-tt">渊源。</p>
-            <p>受 Agent-as-a-Judge(ICML 2025)启发的重写:继承其多数投票聚合、置信度公式与 AUROC 校准评估;辩论编排、元审查、升级路由与状态机为全新构建。MIT 许可。</p>
+            <p>受 Agent-as-a-Judge(ICML 2025)启发的重写:继承其多数投票聚合、置信度公式与 AUROC 校准评估;辩论编排、元审查、升级路由与状态机为全新构建。溯源标记借鉴 From Spark to Fire(2026);推理策略多样性借鉴 DMAD(ICLR 2025);自动辩论强度借鉴 Should we be going MAD?(2024)。MIT 许可。</p>
           </div>
         </div>
       </section>
@@ -609,8 +850,8 @@
   </div>
 
   <footer class="sheet-foot">
-    <span>agent-judges // capability dossier</span>
-    <span>inspired by Agent-as-a-Judge (ICML 2025) · MIT</span>
+    <span>agent-judges // capability dossier v2</span>
+    <span>inspired by Agent-as-a-Judge (ICML 2025) · DMAD (ICLR 2025) · MIT</span>
   </footer>
 
 </div>

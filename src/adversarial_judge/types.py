@@ -62,3 +62,7 @@ class Verdict(BaseModel):
     calibrated_confidence: float | None = None  # set by meta-review
     original_content: str | None = None  # for meta-review backtracking (L-3)
     confidence_adjustment: float | None = None  # meta-reviewer's suggested delta
+    # 落地项 4: 3-tier action layer
+    auto_fix_eligible: bool = False  # GREEN: AI may directly fix
+    action_level: str | None = None  # "green" / "yellow" / "red"
+    action_reasoning: str | None = None  # why this action level

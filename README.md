@@ -54,47 +54,31 @@ pip install -e .
 
 安装后直接在宿主会话中触发，LLM 能力来自宿主环境。
 
-### CLI 直连模式（调试 / CI）
+```bash
+# 在宿主会话里直接说:
+"帮我对抗审查这份 spec.md"
+→ 宿主委派 judge-manager → 引擎驱动匿名 reviewer 辩论 → 汇报 verdict
+```
 
-加 `--llm litellm` 走引擎进程内直连，需 API key（`.env.sample` → `.env`）：
+judge-manager 支持自然语言触发，也可以直接指定参数：
+
+```
+"审查这份 spec.md，用 thorough 档"
+"审查 auth.py，--scene code"
+"审查这份检视报告 review.json，--scene review-report"
+"零参数全自动审查 requirements.md"
+```
+
+### 命令行工具
+
+`agent-judges` CLI 提供安装、列出视角模板、列出 skill 等辅助命令：
 
 ```bash
-# 列出内置视角模板与 skill
-agent-judges list-reviewers
-agent-judges list-skills
-
-# 零决策全自动: 渐进式审查自动选档(--scene 按后缀推断, .md → document)
-agent-judges review --file ./spec.md --llm litellm
-
-# 显式指定审查场景
-agent-judges review --file ./spec.md --llm litellm --scene document
-agent-judges review --file ./auth.py --llm litellm --scene code
-agent-judges review --file ./review.json --llm litellm --scene review-report
-
-# 显式选档
-agent-judges review --file ./spec.md --llm litellm --scene document --profile fast
-agent-judges review --file ./spec.md --llm litellm --scene document --profile standard
-agent-judges review --file ./spec.md --llm litellm --scene document --profile thorough
-
-# 细粒度参数
-agent-judges review --llm litellm --scene document --content "系统需要支持高并发..." \
-  --debate-rounds 2 --threshold 0.8
-
-# 管道接入
-cat requirements.md | agent-judges review --llm litellm --scene document -o json | jq '.verdict.escalate_to_human'
-
-# 元审查: 审查上一轮的审查结果
-agent-judges review --llm litellm --file verdict.json --scene document --meta-review -o json > meta_verdict.json
-
-# 双格式输出到目录
-agent-judges review --llm litellm --file ./spec.md --scene document --output both --output-dir ./reports
-
-# 预算控制 + 本地网关
-agent-judges review --llm litellm --file ./spec.md --scene document --max-cost 0.50
-agent-judges review --llm litellm --file ./spec.md --scene document --base-url http://localhost:11434
-
-# 低置信度时暂停等待人工裁决
-agent-judges review --llm litellm --file ./spec.md --scene document --interactive
+agent-judges install                              # 安装到宿主(默认 codeagent 平台)
+agent-judges install --platform claude-code       # 安装到 claude-code
+agent-judges install --platform opencode --project  # 安装到 opencode 项目级
+agent-judges list-reviewers                       # 列出内置视角模板
+agent-judges list-skills                          # 列出内置 skill
 ```
 
 ## 审查场景（--scene）
@@ -147,23 +131,25 @@ agent-judges review --llm litellm --file ./spec.md --scene document --interactiv
 
 ## 扩展 reviewer
 
-本系统的约束模型是**匿名槽位 + 视角注入**：安装时只有一个匿名 reviewer Agent（无 persona），所有审查视角通过文件定义，引擎在发出任务时将 persona + checklist 编译进 task prompt。**不创建新的 Agent 文件**。用户不直接指定用哪个 reviewer，而是通过 `--scene` 声明场景，引擎按 `scenes` 元字段自动筛选。
+安装时只装 1 个匿名 reviewer Agent（无 persona）。所有审查视角通过文件定义，引擎编译进 task prompt。**不创建新的 Agent 文件**。
 
-### 视角模板（`reviewers/*.md`）
+扩展方式有两种，可以单独或组合使用：
 
-定义"谁来审"——persona + checklist + scenes。复制 `reviewers/custom_example.md` 为新文件即可：
+### 方式一：新增视角模板（定义"谁来审"）
+
+在 `reviewers/` 目录下新建 `.md` 文件（复制 `reviewers/custom_example.md` 改即可）。模板包含 persona（审查者人设）+ checklist（检查清单）+ scenes（适用场景）。引擎按 `--scene` 自动筛选匹配的模板。
 
 ```markdown
 ---
 name: my-security-auditor        # 唯一标识
 description: 安全审计视角
-scenes: [document, code]          # 适用的场景(可多值)
+scenes: [document, code]          # 声明适用场景(可多值)
 # model: opus                    # 可选,宿主命名空间模型名(省略=宿主默认)
 checklist:                       # 检查清单
   - criteria: 认证与授权路径完整
   - criteria: 敏感数据处理合规
     weight: 0.5                  # checklist 项可单独设权重
-skills:                          # 可选:引用 skill(知识注入)
+skills:                          # 可选:引用 skill 知识包(见方式二)
   - owasp-top10
 weight: 1.0                      # 聚合权重
 majority_vote: 1                 # >1 时同模型多次调用投票(反幻觉)
@@ -175,23 +161,29 @@ majority_vote: 1                 # >1 时同模型多次调用投票(反幻觉)
 ```
 
 ```bash
-# 模板加入 reviewers/ 后,--scene document 或 --scene code 时自动匹配
+# 文件放入 reviewers/ 后,引擎按 --scene 自动匹配,无需指定 reviewer 名
 agent-judges review --file doc.md --scene document
 ```
 
-### 审查 skill（`skills/*.md` 或 `skills/<name>/SKILL.md`）
+> **系统固定框架**：无论 persona 怎么写，引擎会在 persona 外层套一段不可覆盖的行为约束（客观引用证据、severity 与证据强度匹配、推理可追溯）。你只需写"审查什么、怎么审"，不必操心输出格式和辩论流程——这些由系统固定控制。
 
-定义"用什么知识审"——领域知识包（模式清单、定级基准、few-shot 示例）。纯 LLM 范式，不含工具执行。通过 reviewer 模板的 `skills:` 字段引用，skill body 在 registry 加载时自动注入到 reviewer 的 system_prompt。
+### 方式二：新增审查 skill（定义"用什么知识审"）
 
-内置示例：`dangerous-operation-scanner` 模板引用 `dangerous-operations` skill。
+在 `skills/` 目录下新建知识包文件。skill 是纯领域知识（模式清单、定级基准、few-shot 示例），不含工具执行。两种文件格式任选：
 
-skill 文件格式：
+```
+skills/
+  my-compliance.md            # 单文件格式
+  owasp-top10/SKILL.md        # 目录格式(适合带附加资源的知识包)
+```
+
+skill 通过 reviewer 模板的 `skills:` 字段引用。引擎加载时将 skill 正文自动拼接到该 reviewer 的 persona 后面，reviewer 即获得该领域知识：
 
 ```markdown
 ---
 name: my-compliance-skill
 description: 金融合规审查知识包
-checklist:            # 可选:作为检查清单
+checklist:                     # 可选:作为检查清单注入引用方
   - criteria: "敏感数据分类分级已落实"
 ---
 
@@ -202,6 +194,18 @@ checklist:            # 可选:作为检查清单
 
 ```bash
 agent-judges list-skills                        # 查看可用 skill
+```
+
+内置示例：`dangerous-operation-scanner` 模板引用 `dangerous-operations` skill 获取危险操作模式清单和语义判定指引。
+
+### 自定义目录路径
+
+默认从 `./reviewers/` 和 `./skills/` 加载。通过 CLI 参数指定自定义路径：
+
+```bash
+agent-judges review --file doc.md --scene document \
+  --reviewers-dir ./my-reviewers \
+  --skills-dir ./my-skills
 ```
 
 ### scenes 字段
@@ -222,7 +226,6 @@ scenes: [document, code]     # 跨场景
 - **claude 系宿主**：仅 Anthropic 模型（`opus`/`sonnet`/完整 ID）
 - **opencode 系宿主**：`provider/model`（已配置任意 provider，含自定义网关）
 - **省略**：宿主默认模型
-- **异构面板**（不同 reviewer 用不同模型）：使用 `--llm litellm` 直连模式
 
 ### graphify 证据注入
 

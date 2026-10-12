@@ -36,6 +36,7 @@ from .consensus import (
     compute_stability,
     detect_conformity,
     failed_verdict,
+    infer_skepticism,
     synthesize_verdict,
 )
 from .evidence import enrich_context
@@ -167,7 +168,11 @@ class DebateOrchestrator:
         ]
         token_count = count_tokens(content)
         start = start_panel_size(token_count)
-        panel_names = deterministic_panel(available, PROFILE_MAP["thorough"]["reviewers"])
+        panel_names = deterministic_panel(
+            available,
+            PROFILE_MAP["thorough"]["reviewers"],
+            {r.name: r.reasoning_strategy or "checklist" for r in self.registry.list_all()},
+        )
         reviewers = [self.registry.get(n) for n in panel_names]
         gate1_reason: str | None = None
 
@@ -271,6 +276,8 @@ class DebateOrchestrator:
         # Phase 2: adversarial debate — only when >= 2 reviewers (B-3)
         debate_log: list[list[str]] = []
         if len(reviewers) >= 2 and debate_rounds > 0:
+            # Auto-infer skepticism from Phase-1 signals (落地项 3)
+            skepticism = infer_skepticism(individual_verdicts)
             current_positions = [v.reasoning for v in individual_verdicts]
             for _round_idx in range(debate_rounds):
                 if not self.broker.check_budget():
@@ -279,7 +286,7 @@ class DebateOrchestrator:
                     )
                     break
                 round_args = self._debate_round(
-                    reviewers, content, current_positions, context
+                    reviewers, content, current_positions, context, skepticism
                 )
                 debate_log.append(round_args)
                 current_positions = round_args
@@ -358,7 +365,7 @@ class DebateOrchestrator:
         user_prompt = build_judge_prompt(
             safe_content, reviewer.checklist, safe_context
         )
-        system_prompt = build_system_prompt(reviewer.system_prompt)
+        system_prompt = build_system_prompt(reviewer.system_prompt, reviewer.reasoning_strategy)
 
         if reviewer.majority_vote > 1:
             return run_majority_vote(llm, reviewer, user_prompt, reviewer.majority_vote)
@@ -374,6 +381,7 @@ class DebateOrchestrator:
         content: str,
         current_positions: list[str],
         context: str | None,
+        skepticism: float = 0.7,
     ) -> list[str]:
         """One debate round: each reviewer sees the others' positions and
         rebuts. A failed reviewer keeps its original position."""
@@ -387,7 +395,7 @@ class DebateOrchestrator:
                 if j != i
             )
             try:
-                return self._debate_single(reviewer, content, others, context)
+                return self._debate_single(reviewer, content, others, context, skepticism)
             except Exception as e:
                 logger.warning(
                     "Reviewer '%s' failed in debate round: %s", reviewer.name, e
@@ -407,9 +415,10 @@ class DebateOrchestrator:
         content: str,
         others_args: str,
         context: str | None,
+        skepticism: float = 0.7,
     ) -> str:
         llm = self.broker.get_llm(reviewer.model)
-        system = build_debate_system_prompt(reviewer.system_prompt)
+        system = build_debate_system_prompt(reviewer.system_prompt, skepticism)
         user = build_debate_user_prompt(
             fit_for_model(llm, content), fit_for_model(llm, others_args, share=2)
         )

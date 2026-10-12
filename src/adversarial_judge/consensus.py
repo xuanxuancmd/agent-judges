@@ -19,6 +19,7 @@ __all__ = [
     "compute_stability",
     "detect_conformity",
     "aggregate_majority_votes",
+    "infer_skepticism",
 ]
 
 
@@ -123,17 +124,32 @@ def detect_conformity(
     reviewer may have validly retracted a flawed finding — but it flags
     the case for audit.
 
+    Provenance-guard detection (落地项 1): if the reviewer's final
+    reasoning contains ``[?未验证]`` markers (indicating they based a
+    position change on unverified peer claims), an additional warning
+    is emitted — this is the exact failure mode that error-cascade
+    defense targets.
+
     Returns a list of warning strings (empty = no conformity detected).
     """
     if not individual or not final:
         return []
     warnings: list[str] = []
     for idx, (ind, fin) in enumerate(zip(individual, final)):
-        if ind.satisfied == fin.satisfied:
-            continue  # position didn't flip
         ind_descs = {f.description for f in ind.findings}
         fin_descs = {f.description for f in fin.findings}
         new_findings = fin_descs - ind_descs
+
+        # Provenance-guard: reviewer based a change on unverified claims
+        has_unverified = "[?未验证]" in (fin.reasoning or "")
+        if has_unverified:
+            warnings.append(
+                f"reviewer #{idx}: 最终推理包含[?未验证]标记,"
+                f"可能基于未验证的主张调整了立场"
+            )
+
+        if ind.satisfied == fin.satisfied:
+            continue  # position didn't flip
         if not new_findings:
             warnings.append(
                 f"reviewer #{idx}: satisfied {ind.satisfied}→{fin.satisfied} "
@@ -170,3 +186,33 @@ def aggregate_majority_votes(verdicts: list[Verdict]) -> Verdict:
         findings=all_findings,
         satisfied=majority_satisfied,
     )
+
+
+def infer_skepticism(individual_verdicts: list[Verdict]) -> float:
+    """Auto-infer debate skepticism from Phase-1 signals (落地项 3).
+
+    No external configuration needed — the skepticism is derived purely
+    from the Phase-1 verdicts:
+
+    - ``critical`` severity or consensus < 0.5 → ``0.9`` (high skepticism:
+      deep challenge, don't let a false claim spread)
+    - full consensus (1.0) and only minor/pass → ``0.4`` (low skepticism:
+      prioritize convergence)
+    - otherwise → ``0.7`` (moderate: the classic default)
+
+    This is a pure function — the caller passes it to
+    ``build_debate_system_prompt`` when entering Phase 2.
+    """
+    if not individual_verdicts:
+        return 0.7  # default moderate
+
+    consensus = compute_consensus(individual_verdicts)
+    max_severity_rank = max(v.severity.rank for v in individual_verdicts)
+
+    if max_severity_rank >= Severity.CRITICAL.rank:
+        return 0.9
+    if consensus < 0.5:
+        return 0.85
+    if consensus == 1.0 and max_severity_rank <= Severity.MINOR.rank:
+        return 0.4
+    return 0.7

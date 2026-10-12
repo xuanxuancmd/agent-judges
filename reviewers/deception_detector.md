@@ -2,6 +2,7 @@
 name: deception-detector
 description: 审查 agent 执行日志,检测 claim 与证据不一致(欺骗检测)及过程合规性
 scenes: [document, review-report]
+reasoning_strategy: checklist
 # model: <宿主命名空间模型名>   # 可选;省略 = 宿主默认模型(claude: opus/sonnet/全名; opencode: provider/model)
 weight: 1.3
 checklist:
