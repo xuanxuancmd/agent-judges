@@ -1,5 +1,10 @@
-﻿"""Progressive review tests: gates, decisions, resolve_flow, orchestration
-(zero real LLM calls — MockLLM only)."""
+﻿"""Progressive review tests: gates, decisions, resolve_flow (pure functions).
+
+The DebateOrchestrator (in-process litellm direct mode) has been removed;
+the agent-driven path tests live in test_e2e.py. These tests cover the pure
+functions from progressive.py and review_flow.py that the engine also
+depends on.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,6 @@ import pytest
 
 from agent_judges.cli.review_flow import FlowError, FlowRequest, resolve_flow
 from agent_judges.consensus import failed_verdict
-from agent_judges.debate import DebateOrchestrator
 from agent_judges.progressive import (
     LONG_CONTENT_TOKENS,
     ProgressiveDecision,
@@ -19,14 +23,10 @@ from agent_judges.types import Severity
 from agent_judges.utils.truncate import count_tokens
 
 from fixtures.helpers import (
-    VERDICT_JSON_SATISFIED,
-    VERDICT_JSON_UNSATISFIED,
     make_config,
     make_finding,
-    make_registry,
     make_verdict,
 )
-from fixtures.mock_llm import MockLLM, MockLLMBroker
 
 MAJOR_VERDICT_JSON = """```json
 {"severity": "major", "confidence": 0.85, "reasoning": "r",
@@ -205,122 +205,3 @@ class TestResolveFlow:
     def test_no_available_errors(self):
         with pytest.raises(FlowError):
             resolve_flow(FlowRequest(available=[]))
-
-
-# ---------------------------------------------------------------------------
-# run_progressive orchestration (MockLLM)
-# ---------------------------------------------------------------------------
-
-
-def _orchestrator(mock_llm: MockLLM, names: tuple[str, ...]) -> DebateOrchestrator:
-    broker = MockLLMBroker(mock_llm)
-    registry = make_registry(*[make_config(n) for n in names])
-    return DebateOrchestrator(registry=registry, broker=broker, debate_rounds=2)
-
-
-_THREE = ("sentinel-reviewer", "second-reviewer", "third-reviewer")
-
-
-class TestRunProgressive:
-    def test_early_stop_costs_one_call(self):
-        mock = MockLLM(responses={"审查框架": VERDICT_JSON_SATISFIED})
-        orch = _orchestrator(mock, _THREE)
-        result, decision = orch.run_progressive("短内容", candidates=list(_THREE))
-        assert mock.call_count == 1
-        assert decision.early_stopped is True
-        assert decision.tier == "fast"
-        assert decision.reviewers == ["sentinel-reviewer"]
-        assert decision.review_depth == 0
-        assert result.stability_degraded is True
-        assert result.debate_rounds == []
-        assert len(result.individual_verdicts) == 1
-        assert result.final_verdict.severity == Severity.PASS
-
-    def test_sentinel_failure_escalates_thorough(self):
-        mock = MockLLM(
-            responses={
-                "审查框架": VERDICT_JSON_UNSATISFIED,
-                "辩论阶段": "我坚持存在量化指标缺失问题",
-                "辩论已结束": VERDICT_JSON_UNSATISFIED,
-            }
-        )
-        orch = _orchestrator(mock, _THREE)
-        result, decision = orch.run_progressive("短内容", candidates=list(_THREE))
-        assert decision.early_stopped is False
-        assert decision.tier == "thorough"
-        assert decision.debate_rounds == 2
-        assert decision.review_depth == 1
-        # sentinel verdict kept + 2 expansion reviewers, no re-computation
-        assert len(result.individual_verdicts) == 3
-        assert len(result.debate_rounds) == 2
-        # 1 sentinel + 2 expansion + 3×2 debate + 3 blind final = 12
-        assert mock.call_count == 12
-
-    def test_major_only_continues_standard(self):
-        mock = MockLLM(
-            responses={
-                "审查框架": MAJOR_VERDICT_JSON,
-                "辩论阶段": "argue",
-                "辩论已结束": MAJOR_VERDICT_JSON,
-            }
-        )
-        orch = _orchestrator(mock, _THREE)
-        result, decision = orch.run_progressive("短内容", candidates=list(_THREE))
-        assert decision.tier == "standard"
-        assert decision.debate_rounds == 1
-        assert decision.review_depth == 0
-        # 3 phase-1 + 3 debate (1 round) + 3 blind final = 9
-        assert mock.call_count == 9
-        assert result.final_verdict.severity == Severity.MAJOR
-
-    def test_max_tier_caps_escalation(self):
-        # e.g. meta-reviewer templates unavailable → thorough capped at standard
-        mock = MockLLM(
-            responses={
-                "审查框架": VERDICT_JSON_UNSATISFIED,
-                "辩论阶段": "argue",
-                "辩论已结束": VERDICT_JSON_UNSATISFIED,
-            }
-        )
-        orch = _orchestrator(mock, _THREE)
-        result, decision = orch.run_progressive(
-            "短内容", candidates=list(_THREE), max_tier="standard"
-        )
-        assert decision.tier == "standard"
-        assert decision.review_depth == 0
-        assert len(result.debate_rounds) == 1
-
-    def test_long_content_starts_full_panel(self):
-        content = "详细规格内容。"
-        while count_tokens(content) < LONG_CONTENT_TOKENS + 100:
-            content *= 2
-        assert count_tokens(content) >= LONG_CONTENT_TOKENS
-        mock = MockLLM(
-            responses={
-                "审查框架": VERDICT_JSON_SATISFIED,
-                "辩论阶段": "agree",
-                "辩论已结束": VERDICT_JSON_SATISFIED,
-            }
-        )
-        orch = _orchestrator(mock, _THREE)
-        result, decision = orch.run_progressive(content, candidates=list(_THREE))
-        assert decision.start_panel == 3
-        assert decision.early_stopped is False  # gate 1 skipped entirely
-        assert decision.gate1_reason is None
-        assert len(result.individual_verdicts) == 3
-        # all-pass conf 0.92 → gate 2 standard (weighted conf ≥ 0.8)
-        assert decision.tier == "standard"
-        assert result.final_verdict.severity == Severity.PASS
-
-    def test_single_reviewer_pool_degrades_gracefully(self):
-        # pool of one: sentinel is the whole panel; a non-clean verdict
-        # continues through the single-reviewer fast-check form
-        mock = MockLLM(responses={"审查框架": MAJOR_VERDICT_JSON})
-        orch = _orchestrator(mock, ("only-reviewer",))
-        result, decision = orch.run_progressive(
-            "短内容", candidates=["only-reviewer"]
-        )
-        assert decision.early_stopped is False
-        assert decision.reviewers == ["only-reviewer"]
-        assert result.stability_degraded is True
-        assert result.final_verdict.severity == Severity.MAJOR

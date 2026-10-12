@@ -1,15 +1,15 @@
-﻿"""truncate_string unit tests + debate token-fit guard (omission B-4)."""
+﻿"""truncate_string unit tests (pure function, no litellm).
+
+The debate token-fit guard (fit_for_model) was part of the in-process
+litellm direct mode and has been removed. The agent-driven path handles
+token limits in the engine's task emission.
+"""
 
 from __future__ import annotations
 
 import pytest
 
-from agent_judges.debate import DebateOrchestrator, fit_for_model
-from agent_judges.types import Severity
 from agent_judges.utils.truncate import truncate_string
-
-from fixtures.helpers import VERDICT_JSON_UNSATISFIED, make_config, make_registry
-from fixtures.mock_llm import MockLLM, MockLLMBroker
 
 
 class TestTruncateString:
@@ -39,34 +39,3 @@ class TestTruncateString:
     def test_unknown_model_falls_back_to_cl100k(self):
         result = truncate_string("hello", model="totally-unknown-model")
         assert result == "hello"
-
-
-class TestDebateTokenFit:
-    def _orchestrator(self, mock: MockLLM) -> DebateOrchestrator:
-        broker = MockLLMBroker(mock)
-        registry = make_registry(make_config("r1"))
-        return DebateOrchestrator(registry=registry, broker=broker, debate_rounds=0)
-
-    def test_fit_reduces_oversized_content(self):
-        huge = "内容" * 20000  # far beyond the mock's 4096-token budget
-        fitted = fit_for_model(MockLLM(), huge)
-        assert len(fitted) < len(huge)
-        assert "..." in fitted
-
-    def test_fit_keeps_small_content(self):
-        assert fit_for_model(MockLLM(), "短内容") == "短内容"
-
-    def test_fit_share_divides_budget(self):
-        text = "字" * 5000
-        full = fit_for_model(MockLLM(), text)
-        half = fit_for_model(MockLLM(), text, share=2)
-        assert len(half) <= len(full)
-
-    def test_oversized_content_still_completes_review(self):
-        # end-to-end guard: a huge input no longer blows the pipeline
-        mock = MockLLM(responses={"审查框架": VERDICT_JSON_UNSATISFIED})
-        orch = self._orchestrator(mock)
-        result = orch.run("需求" * 20000, ["r1"])
-        assert result.final_verdict.severity == Severity.CRITICAL
-        assert result.final_verdict.satisfied is False
-        assert mock.call_count == 1

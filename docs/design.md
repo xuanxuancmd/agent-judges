@@ -15,7 +15,7 @@
 
 ### 1.2 改造策略
 
-保留: litellm 多模型能力, DevAsk 投票与置信度算法, judge prompt 模板。
+保留: host LLM 多模型能力, DevAsk 投票与置信度算法, judge prompt 模板。
 剥离: workspace 与 benchmark 耦合, 证据收集模块(DevGraph / DevCodeSearch / DevRead / DevLocate / DevTextRetrieve / Memory / Planning)。
 新增: 外部 reviewer 定义(MD frontmatter), prepare/resume 状态机引擎, 辩论编排器, 渐进式门控, 升级路由, 元审查, 通用 CLI, judge-manager 宿主集成。
 
@@ -38,7 +38,7 @@
 | 工具层 | 代码专用(tree-sitter / BM25 / embedding) | 无 | 通用(Read / Grep / Bash / gh) |
 | 通用性 | 绑代码 workspace | 任意文本产出物 | 绑 Claude Code transcript |
 | 幻觉防护 | 工具验证 + 同模型多次投票 | 多模型 + 多 reviewer 辩论 + 元审查 | 主动验证 + 欺骗检测 |
-| 依赖 | 重(spacy / sentence-transformers / opencv / tree-sitter) | 轻(litellm / pydantic / typer) | 中(Claude Code skill) |
+| 依赖 | 重(spacy / sentence-transformers / opencv / tree-sitter) | 轻(host LLM / pydantic / typer) | 中(Claude Code skill) |
 
 ### 2.2 与 agent teams 架构的区别
 
@@ -93,7 +93,7 @@ reviewer 在辩论中没有自己的名字身份。它是一个匿名判断单�
 | 宿主 Agent 集成 | 是 | `agent-judges install` 将 judge-manager + reviewer Agent 装入宿主, 会话内直接触发审查 |
 | Python 库嵌入 | 否 | 不在 agent 运行时中 import, 避免耦合 |
 
-主流场景是宿主集成: 用户在 Claude Code 或 OpenCode 会话中提出审查诉求, 宿主委派 judge-manager 实体 Agent 完成审查。LLM 能力(模型、凭证、额度)全部来自宿主已有配置, 用户零模型配置。CLI 直连模式(`--llm litellm`)保留为 CI 和裸机回退。
+主流场景是宿主集成: 用户在 Claude Code 或 OpenCode 会话中提出审查诉求, 宿主委派 judge-manager 实体 Agent 完成审查。LLM 能力(模型、凭证、额度)全部来自宿主已有配置, 用户零模型配置。CLI 直连模式(`host LLM`)保留为 CI 和裸机回退。
 
 ---
 
@@ -141,7 +141,7 @@ src/agent_judges/ 的实际 v2 结构(37 个 Python 文件):
     ├── types.py                      Severity 枚举, Verdict / Finding Pydantic schema
     ├── reviewer.py                   MD frontmatter + persona 加载, ReviewerRegistry
     ├── skill.py                      SKILL.md 知识包加载(模板引用 / 即席加载)
-    ├── debate.py                     4 阶段辩论编排(litellm 直连路径, 技术债: agent 模式走 engine.advance)
+    ├── debate.py                     4 阶段辩论编排(host LLM 直连路径, 技术债: agent 模式走 engine.advance)
     ├── judge.py                      verdict 解析降级链, run_majority_vote 投票算法
     ├── consensus.py                  consensus / stability 计算, synthesize_verdict 加权合成
     ├── escalation.py                 置信度阈值, escalate_to_human 路由
@@ -153,11 +153,11 @@ src/agent_judges/ 的实际 v2 结构(37 个 Python 文件):
     ├── progressive.py                两道纯规则门(早停 / 续跑强度), ProgressiveDecision 审计
     ├── router.py                     确定性 reviewer 选择, PROFILE_MAP 三档, RouteDecision
     ├── llm/
-    │   ├── provider.py               litellm wrapper(多模型 DI), Cost 集成, retry
+    │   ├── provider.py               host LLM wrapper(多模型 DI), Cost 集成, retry
     │   ├── broker.py                 LLMBroker 多模型管理(缓存 + 累计成本 + 预算)
     │   ├── cost.py                   Cost 成本追踪(原样保留自 AaaJ)
     │   ├── structured_output.py      force_structured_output 4 级降级链
-    │   └── credentials.py            凭证继承(显式参数 > 环境变量 > litellm 回退)
+    │   └── credentials.py            凭证继承(显式参数 > 环境变量 > host LLM 回退)
     ├── prompts/
     │   ├── judge_system.py           通用 judge system prompt(含匿名框架)
     │   ├── judge_user.py             通用 judge user prompt(接受任意内容)
@@ -165,7 +165,7 @@ src/agent_judges/ 的实际 v2 结构(37 个 Python 文件):
     ├── cli/
     │   ├── __init__.py               typer app 注册
     │   ├── __main__.py               python -m 入口
-    │   ├── review.py                 review 子命令(litellm 直连模式)
+    │   ├── review.py                 review 子命令(host LLM 直连模式)
     │   ├── review_flow.py            review 流程编排(渐进式 / fixed)
     │   ├── install.py                install 子命令(编译 reviewer + 模板 → 宿主 Agent)
     │   ├── inspect.py                inspect-reviewer 子命令
@@ -194,7 +194,7 @@ src/agent_judges/ 的实际 v2 结构(37 个 Python 文件):
 
 引擎层是 agent-judges CLI 的 prepare / resume 状态机。`prepare_progressive` 或 `prepare_fixed` 初始化 RunState 并发出首批任务。`advance(state, results, configs)` 是纯函数, 消费 driver 写回的结果, 推进状态机, 发出下一批任务或产出终态。渐进式门控、4 阶段辩论、裁决合成、解析降级、升级路由全部在这里确定性执行。
 
-LLM 层有两种执行器。agent 驱动模式下, 每次 reviewer 调用就是宿主内拉起一个实体 reviewer Agent, 模型和凭证来自宿主配置。litellm 直连模式下, 引擎进程内直接调 LLM API, 凭证经环境变量, 服务 CI 和裸机场景。
+LLM 层有两种执行器。agent 驱动模式下, 每次 reviewer 调用就是宿主内拉起一个实体 reviewer Agent, 模型和凭证来自宿主配置。host LLM 直连模式下, 引擎进程内直接调 LLM API, 凭证经环境变量, 服务 CI 和裸机场景。
 
     外部(宿主会话 / CI / shell 管道)
       │
@@ -207,7 +207,7 @@ LLM 层有两种执行器。agent 驱动模式下, 每次 reviewer 调用就是�
       │    ├── progressive.py: 门1(早停) + 门2(续跑强度)
       │    ├── run_state.py: RunState / Stage / AgentTask / run-dir IO
       │    ├── router.py: 确定性面板选择 + PROFILE_MAP
-      │    ├── debate.py: 4 阶段辩论(litellm 直连路径)
+      │    ├── debate.py: 4 阶段辩论(host LLM 直连路径)
       │    ├── consensus.py: 加权合成 + consensus / stability
       │    ├── judge.py: verdict 解析降级链 + majority_vote
       │    ├── meta_review.py: 元审查 + 校准公式
@@ -216,15 +216,15 @@ LLM 层有两种执行器。agent 驱动模式下, 每次 reviewer 调用就是�
       │
       ▼
     LLM 层  agent 模式: 宿主实体 reviewer Agent(模型 = 宿主配置)
-            litellm 模式: llm / provider.py + broker.py(进程内直连)
+            host LLM 模式: llm / provider.py + broker.py(进程内直连)
 
 ### 4.3 三层架构
 
 入口层(judge-manager Agent): 宿主内的实体 Agent, 由 `integrations/<host>/agent/judge-manager.md` 模板定义。职责是机械执行驱动协议, 不参与编排。用户在宿主会话中提出审查诉求, 宿主委派 judge-manager, judge-manager 通过 shell 调用 agent-judges CLI 的 prepare / resume 接口。意图匹配靠 judge-manager 的 description, 不引入宿主 skill。
 
-引擎层(agent-judges CLI): prepare / resume 状态机是编排核心。所有流程决策(渐进式门控、4 阶段辩论、verdict 合成、解析降级、升级路由)都在 `engine.py` 的 `advance` 纯函数中确定性推进。这是立项根基: 单 agent 不可靠, 所以编排权不能交给 LLM。两种执行器共享同一 advance 核心, agent 驱动(任务落盘, judge-manager 执行)与 litellm 直连(引擎进程内执行)。
+引擎层(agent-judges CLI): prepare / resume 状态机是编排核心。所有流程决策(渐进式门控、4 阶段辩论、verdict 合成、解析降级、升级路由)都在 `engine.py` 的 `advance` 纯函数中确定性推进。这是立项根基: 单 agent 不可靠, 所以编排权不能交给 LLM。两种执行器共享同一 advance 核心, agent 驱动(任务落盘, judge-manager 执行)与 host LLM 直连(引擎进程内执行)。
 
-LLM 层(宿主实体 reviewer Agent | litellm 直连): 主流场景下全部 LLM 能力来自宿主已配置环境。每次 reviewer 调用等于宿主内拉起一个实体 reviewer Agent, 模型由 Agent 定义文件的 `model` 字段声明(宿主命名空间), 凭证完全由宿主管理。litellm 直连保留为 `--llm litellm`(CI / 裸机回退), 非主路径。主路径不引入宿主专有的 headless CLI 调用, 宿主依赖仅限三项公共能力: Agent 定义文件, 原生 subagent 拉起, shell。
+LLM 层(宿主实体 reviewer Agent | host LLM 直连): 主流场景下全部 LLM 能力来自宿主已配置环境。每次 reviewer 调用等于宿主内拉起一个实体 reviewer Agent, 模型由 Agent 定义文件的 `model` 字段声明(宿主命名空间), 凭证完全由宿主管理。host LLM 直连保留为 `host LLM`(CI / 裸机回退), 非主路径。主路径不引入宿主专有的 headless CLI 调用, 宿主依赖仅限三项公共能力: Agent 定义文件, 原生 subagent 拉起, shell。
 
 ---
 
@@ -248,7 +248,7 @@ LLM 层(宿主实体 reviewer Agent | litellm 直连): 主流场景下全部 LLM
 
 辩论编排分四个阶段串行推进, Phase 1 和 Phase 3 内部并行。
 
-Phase 1(独立评审): N 个 reviewer 各自独立评审, 互不知晓对方存在。litellm 直连模式用 ThreadPoolExecutor 并行执行, agent 模式并行任务发射。单个 reviewer 失败时降级为低置信度 Verdict, 不击溃整批。reviewer 模板的 `majority_vote` 大于 1 时, 同模型多次调用后投票聚合(保留 AaaJ 原始算法)。
+Phase 1(独立评审): N 个 reviewer 各自独立评审, 互不知晓对方存在。host LLM 直连模式用 ThreadPoolExecutor 并行执行, agent 模式并行任务发射。单个 reviewer 失败时降级为低置信度 Verdict, 不击溃整批。reviewer 模板的 `majority_vote` 大于 1 时, 同模型多次调用后投票聚合(保留 AaaJ 原始算法)。
 
 Phase 2(对抗辩论): 仅当 reviewer 数大于等于 2 且辩论轮数大于 0 时开启。每轮各 reviewer 看到其他人的观点后反驳。每轮前检查预算, 超限则终止辩论跳到合成。单个 reviewer 辩论失败时保留原立场。
 
@@ -256,13 +256,13 @@ Phase 3(盲评终判): 各 reviewer 基于辩论后的立场独立给出最终�
 
 Phase 4(裁决合成): 加权聚合各 reviewer 的终判。最严判定用 `Severity.rank` 比较(非字符串 max), 取 rank 最高的 severity。satisfied 判定要求所有人都判 pass。加权 confidence 等于各 reviewer confidence 的权重平均。
 
-技术债: `debate.py` 目前有两套实现。litellm 直连路径在 `DebateOrchestrator.run` 中自持 4 阶段流程。agent 模式路径走 `engine.advance` 状态机。两者行为一致, 但代码不共享。重构目标是让 `debate.py` 直连路径也复用 `engine.advance` 核心。
+技术债: `debate.py` 目前有两套实现。host LLM 直连路径在 `DebateOrchestrator.run` 中自持 4 阶段流程。agent 模式路径走 `engine.advance` 状态机。两者行为一致, 但代码不共享。重构目标是让 `debate.py` 直连路径也复用 `engine.advance` 核心。
 
 ### 5.3 结构化输出降级链
 
 verdict 解析有 4 级降级, 每级 try-except, 失败则降级。
 
-第 1 级: litellm tool-use(Anthropic 原生支持)。将 Pydantic schema 手动转为 tool definition, 设 tool_choice 强制调用。提取 tool_calls 参数构造 Verdict。兼容所有 litellm 版本, 不依赖不确定的 litellm 内部 API。
+第 1 级: host LLM tool-use(Anthropic 原生支持)。将 Pydantic schema 手动转为 tool definition, 设 tool_choice 强制调用。提取 tool_calls 参数构造 Verdict。兼容所有 host LLM 版本, 不依赖不确定的 host LLM 内部 API。
 
 第 2 级: response_format(OpenAI 专用)。在 system prompt 追加 JSON schema 约束, 设 response_format 为 json_object。解析响应 content 为 JSON。
 
@@ -360,7 +360,7 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 | `run_state.py` | RunState 模型, Stage / TaskKind 枚举, AgentTask, run-dir IO(new / save / load / write / read) |
 | `progressive.py` | start_panel_size, should_early_stop(门1), escalation_tier(门2), ProgressiveDecision |
 | `router.py` | deterministic_panel(文件名 / 内容映射), PROFILE_MAP 三档, RouteDecision |
-| `debate.py` | DebateOrchestrator 4 阶段(litellm 直连路径), DebateResult |
+| `debate.py` | DebateOrchestrator 4 阶段(host LLM 直连路径), DebateResult |
 | `judge.py` | parse_verdict 降级链, run_majority_vote(AaaJ 投票算法), _build_verdict |
 | `consensus.py` | compute_consensus, compute_stability, synthesize_verdict(加权合成), aggregate_majority_votes |
 | `escalation.py` | EscalationRouter: 置信度 < 阈值 → escalate_to_human |
@@ -372,11 +372,11 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 
 | 文件 | 职责 |
 |---|---|
-| `llm/provider.py` | LLM 类: litellm wrapper, 多模型 DI, Cost 集成, retry(tenacity) |
+| `llm/provider.py` | LLM 类: host LLM wrapper, 多模型 DI, Cost 集成, retry(tenacity) |
 | `llm/broker.py` | LLMBroker: 多模型实例缓存, 累计成本 / token, 预算控制 |
 | `llm/cost.py` | Cost 成本追踪(原样保留自 AaaJ) |
 | `llm/structured_output.py` | force_structured_output: 4 级降级(tool-use → response_format → prompt + 正则 → 标签) |
-| `llm/credentials.py` | 凭证继承: 显式参数 > 环境变量 > litellm 内部回退 |
+| `llm/credentials.py` | 凭证继承: 显式参数 > 环境变量 > host LLM 内部回退 |
 
 ### prompts
 
@@ -392,7 +392,7 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 |---|---|
 | `cli/__init__.py` | typer app 注册, 子命令挂载 |
 | `cli/__main__.py` | python -m agent_judges 入口 |
-| `cli/review.py` | review 子命令(litellm 直连模式: --content / --file / stdin) |
+| `cli/review.py` | review 子命令(host LLM 直连模式: --content / --file / stdin) |
 | `cli/review_flow.py` | review 流程编排: 渐进式 vs fixed, 调 engine.prepare / advance |
 | `cli/install.py` | install 子命令: 编译 reviewer 源 + judge-manager 模板 → 宿主 Agent 定义 |
 | `cli/inspect.py` | inspect-reviewer 子命令: 查看 reviewer 配置详情 |
@@ -427,7 +427,7 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 
 | 风险 | 对策 | 状态 |
 |---|---|---|
-| litellm 对 Claude 结构化输出支持不完整 | structured_output.py 4 级降级链 | 已对策 |
+| host LLM 对 Claude 结构化输出支持不完整 | structured_output.py 4 级降级链 | 已对策 |
 | 辩论轮次过多导致 token 成本爆炸 | debate_rounds 默认 2, --max-cost 预算控制, broker 超限终止 | 已对策 |
 | 多 reviewer 共识度计算不科学 | consensus = satisfied 一致比例, stability = 立场未翻转比例 | 已对策 |
 | Claude 同模型 reviewer 有共享盲区 | 鼓励混用模型, meta-reviewer-2 强制 GPT-4o 异构 | 已对策 |
@@ -448,7 +448,7 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 | B-2 | review_depth 默认 0, --meta-review 等价 1 | 避免默认元审查导致成本失控 |
 | B-3 | 元审查至少 2 个 meta-reviewer, 单 reviewer 跳辩论 | 单 reviewer 无法形成对抗 |
 | B-4 | 校准用显式公式, 非覆盖 confidence | 保留原始置信度信息, 可审计 |
-| B-5 | 结构化输出 4 级降级链 | litellm 对各模型的结构化输出支持不一致 |
+| B-5 | 结构化输出 4 级降级链 | host LLM 对各模型的结构化输出支持不一致 |
 | M-1 | 包名 agent_as_a_judge → agent_judges | 与 CLI 命名一致, 去 fork 痕迹 |
 | M-2 | 删除证据收集模块 + benchmark | 通用审查不需要 workspace 绑定 |
 | M-3 | 新 LLM 类保留 Cost + retry | 不丢失 AaaJ 已有能力 |
@@ -466,11 +466,11 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 
 | 来源 | 关键发现 |
 |---|---|
-| metauto-ai/agent-as-a-judge (MIT, ICML 2025) | litellm 多模型支持, DevAsk.check() 已有 majority_vote + confidence 算法, 无辩论 / 交叉 / 升级路由, 绑 DevAI benchmark |
+| metauto-ai/agent-as-a-judge (MIT, ICML 2025) | host LLM 多模型支持, DevAsk.check() 已有 majority_vote + confidence 算法, 无辩论 / 交叉 / 升级路由, 绑 DevAI benchmark |
 | CyberAgent 开发者博客 (2026-06) | Claude Code skill, 主动验证, Stop-hook, 双输出, 3 级 verdict, 6 轴固定评估, 欺骗检测 |
 | langchain-ai/langgraph + langgraph-supervisor-py | interrupt() 绑 Pregel, Send 原语并行, supervisor 已软弃用, 审查语义全需自建 |
 | okuuva/agent-review-panel (Claude Code plugin) | 4-6 reviewer + 1-3 轮辩论 + 盲评终判 + 完整性审计, 绑 Claude Code |
-| LiteLLM 官方文档 | model + api_key 通用参数, Claude 原生支持 |
+| host LLM 官方文档 | model + api_key 通用参数, Claude 原生支持 |
 
 ### 8.2 借鉴评估(精选)
 
@@ -506,7 +506,7 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 | 阶段 | 工作量 | 交付物 |
 |---|---|---|
 | Phase 0: 文档修正 | 0.5 天 | spec.md + design.md 修正 |
-| Phase 1: Fork + 精简 | 1.5 天 | 删除证据收集模块 + benchmark, 保留 litellm + Cost + DevAsk 算法, 包名迁移 |
+| Phase 1: Fork + 精简 | 1.5 天 | 删除证据收集模块 + benchmark, 保留 host LLM + Cost + DevAsk 算法, 包名迁移 |
 | Phase 2: 多模型注入 | 1.5 天 | LLM 类改为 DI, LLMBroker, structured_output 降级 |
 | Phase 3: 外部 reviewer 定义 | 2 天 | ReviewerConfig + MD 格式 + Registry + 视角模板 |
 | Phase 4: 辩论编排器 + auto 路由 | 3.5 天 | DebateOrchestrator 4 阶段, Severity 排序, consensus + stability, router |
@@ -529,7 +529,7 @@ v2 增补(已落地, 2026-09-11): prepare / resume 状态机(engine.py + run_sta
 | 综合复用率 | 约 989 行等效 | 约 26% |
 | 新建 | 其余 | 约 74% |
 
-直接复用: Cost 成本追踪, tiktoken 截断, litellm wrapper, AUROC 算法(Mann-Whitney U), majority_vote + satisfied_ratio + confidence 公式, SATISFIED 标签解析, judge prompt 模板。
+直接复用: Cost 成本追踪, tiktoken 截断, host LLM wrapper, AUROC 算法(Mann-Whitney U), majority_vote + satisfied_ratio + confidence 公式, SATISFIED 标签解析, judge prompt 模板。
 
 概念复用: verdict 序列化模式, 结构化输出标签, few-shot 示例, rich Markdown 渲染, 持久化字段清理, hierarchical requirements DAG 格式, 置信度评估方法论文档。
 

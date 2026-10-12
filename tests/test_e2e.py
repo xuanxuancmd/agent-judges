@@ -7,15 +7,10 @@ Review targets are the two requirement doc sets under ``tests/project/``
 - ``graphify-gitnexus``   — complex requirement (GitNexus-parity capabilities
                             on top of the graphify knowledge graph)
 
-Three ways to run (see README "E2E 测试"):
-
-- automated, zero token (default suite): ``MockScenarioAnswerer`` drives the
-  judge-manager protocol (prepare → tasks → results → resume → verdict) over
-  the real documents — CLI + run-dir protocol + progressive gates + 4-phase
-  debate + synthesis + escalation, end to end.
-- automated, real LLM (``-m integration``, needs credentials): the same
-  driver with ``LitellmAnswerer`` — verifies the actual review effect.
-- manual, human-readable reports: ``python scripts/e2e_review.py``
+Automated, zero token (default suite): ``MockScenarioAnswerer`` drives the
+judge-manager protocol (prepare → tasks → results → resume → verdict) over
+the real documents — CLI + run-dir protocol + progressive gates + 4-phase
+debate + synthesis + escalation, end to end.
 """
 
 from __future__ import annotations
@@ -32,11 +27,9 @@ from agent_judges.run_state import run_dir_layout
 from conftest import REVIEWERS_DIR, SKILLS_DIR
 from fixtures.e2e_driver import (
     PROJECTS_DIR,
-    LitellmAnswerer,
     MockScenarioAnswerer,
     drive_review,
 )
-from fixtures.mock_llm import MockLLM, MockLLMBroker
 
 TODO_DIR = PROJECTS_DIR / "todo-app"
 GRAPHIFY_DIR = PROJECTS_DIR / "graphify-gitnexus"
@@ -202,89 +195,3 @@ class TestMockE2E:
         )
         assert_protocol_complete(outcome, context=True)
         assert_thorough_chain(outcome)
-
-
-class TestLitellmDirectPathE2E:
-    """The legacy ``--llm litellm`` in-process path (CI fallback) on a real doc."""
-
-    def test_todo_spec_litellm_direct_mode(self, tmp_path, monkeypatch):
-        def factory(default_model="mock", max_budget_usd=None, **kwargs):
-            responses = {
-                "审查框架": (
-                    "```json\n"
-                    '{"severity": "critical", "confidence": 0.85, '
-                    '"reasoning": "r", "findings": [], "satisfied": false}\n'
-                    "```"
-                ),
-                "辩论阶段": "我坚持存在量化指标缺失问题",
-                "辩论已结束": (
-                    "```json\n"
-                    '{"severity": "critical", "confidence": 0.85, '
-                    '"reasoning": "r", "findings": [], "satisfied": false}\n'
-                    "```"
-                ),
-            }
-            return MockLLMBroker(
-                MockLLM(responses=responses), max_budget_usd=max_budget_usd
-            )
-
-        monkeypatch.setattr("agent_judges.cli.review.LLMBroker", factory)
-        result = CliRunner().invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--file", str(TODO_SPEC),
-                "--scene", "document",
-                "--debate-rounds", "1", "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--skills-dir", str(SKILLS_DIR),
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["verdict"]["severity"] == "critical"
-        assert len(payload["individual_verdicts"]) == 2
-
-
-# --- automated e2e: real LLM (integration marker) ----------------------------
-
-_HOST_LLM_ENV = (
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "OPENAI_API_KEY",
-)
-
-
-@pytest.mark.integration
-@pytest.mark.skipif(
-    not any(os.getenv(var) for var in _HOST_LLM_ENV),
-    reason="requires host LLM credentials (ANTHROPIC_API_KEY / "
-    "ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY)",
-)
-class TestIntegrationE2E:
-    """Real-LLM e2e: the synthetic judge-manager answers every task via
-    litellm. Cost note: auto-progressive on the complex doc may escalate to
-    thorough (~20+ calls); bounded by the answerer's max_calls."""
-
-    def test_integration_todo_spec_auto_progressive(self, tmp_path):
-        outcome = drive_review(
-            TODO_SPEC, LitellmAnswerer(max_calls=80)
-        )
-        assert_protocol_complete(outcome, context=False)
-        assert_verdict_shape(outcome.verdict)
-        assert len(outcome.verdict["individual_verdicts"]) >= 1
-        v = outcome.verdict["verdict"]
-        if v["severity"] != "pass":
-            assert v["findings"], "non-pass verdict must carry findings"
-
-    def test_integration_graphify_spec_auto_progressive(self, tmp_path):
-        outcome = drive_review(
-            GRAPHIFY_SPEC, LitellmAnswerer(max_calls=150)
-        )
-        assert_protocol_complete(outcome, context=False)
-        assert_verdict_shape(outcome.verdict)
-        assert_reviewed_real_document(outcome, GRAPHIFY_SPEC)
-        v = outcome.verdict["verdict"]
-        if v["severity"] != "pass":
-            assert v["findings"], "non-pass verdict must carry findings"

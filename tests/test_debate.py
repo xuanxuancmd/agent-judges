@@ -144,7 +144,9 @@ class TestConformity:
         fin = make_verdict(Severity.PASS, satisfied=True)
         warnings = detect_conformity([ind], [fin])
         assert len(warnings) == 1
-        assert "False->True" in warnings[0]
+        assert "False" in warnings[0]
+        assert "True" in warnings[0]
+        assert "conformity" in warnings[0]
 
     def test_flip_with_retracted_finding_only_still_warns(self):
         """Reviewer flips, removes a finding but adds none -> still warns

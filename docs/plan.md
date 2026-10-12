@@ -12,7 +12,7 @@
 
 ### 0.1 改造目标(一句话)
 
-把系统从"独立 CLI + litellm 直连"改造为"宿主 Agent 生态成员":入口是宿主内的
+把系统从"独立 CLI + host LLM 直连"改造为"宿主 Agent 生态成员":入口是宿主内的
 `judge-manager` 实体 Agent,reviewer 全部为宿主实体 Agent,LLM 能力(模型/凭证/额度)
 全部来自宿主已有配置——用户零模型配置,且**主路径不依赖任何宿主专有的 headless CLI**。
 
@@ -23,7 +23,7 @@
 | D1 | 入口 | `judge-manager` 实体主 Agent(装入宿主);**不安装 skill**(意图匹配由 judge-manager 的 description 完成) |
 | D2 | reviewer | 全部为宿主实体 Agent(从 `reviewers/*.md` 源生成安装);取消匿名 prompt 注入模式 |
 | D3 | 执行模型 | 引擎以 **prepare/resume 状态机**编排:发出任务清单 → driver 机械执行 → 引擎确定性推进;门控/合成/降级全在引擎 |
-| D4 | LLM 能力 | 主路径全部经宿主实体 Agent;litellm 直连保留为 `--llm litellm`(CI/裸机);主路径零 headless 依赖 |
+| D4 | LLM 能力 | 主路径全部经宿主实体 Agent;host LLM 直连保留为 `host LLM`(CI/裸机);主路径零 headless 依赖 |
 | D5 | CLI 命名 | 命令全称 `agent-judges`(废弃 `aj`,避免短名冲突);`install` 为子命令 |
 | D6 | 源格式 | `reviewers/*.yaml` → `*.md`(frontmatter=编排元数据+模型,正文=persona);`skills/` 知识包保持不变 |
 
@@ -64,7 +64,7 @@ Phase 5: 测试收口 + 文档同步                        (~1-1.5 天)
 | 任务 | 文件 | 内容 |
 |---|---|---|
 | 1-1 | `pyproject.toml` | script:移除 `aj`,注册 `agent-judges = "agent_judges.cli:app"` |
-| 1-2 | `reviewers/*.md`(20 个) | YAML→MD 机械迁移:frontmatter(name/description/model/weight/majority_vote/skills)+ 正文(persona = 原 system_prompt)。**迁移时移除 model 字段值**(= 宿主默认;存量 litellm 串在宿主命名空间下无意义),文件内注释说明可选宿主命名空间模型写法 |
+| 1-2 | `reviewers/*.md`(20 个) | YAML→MD 机械迁移:frontmatter(name/description/model/weight/majority_vote/skills)+ 正文(persona = 原 system_prompt)。**迁移时移除 model 字段值**(= 宿主默认;存量 host LLM 串在宿主命名空间下无意义),文件内注释说明可选宿主命名空间模型写法 |
 | 1-3 | `src/.../reviewer.py` | MD 解析(复用 skill.py 的 frontmatter 解析模式);Registry 同时兼容 `*.md`(优先)与 `*.yaml`(过渡期) |
 | 1-4 | `tests/test_reviewer.py` 等 | MD 解析与迁移回归用例 |
 | 1-5 | README / AGENTS.md / docs 命令示例 | `aj` → `agent-judges` |
@@ -104,7 +104,7 @@ awaiting_panel → gate2 → tier(standard | thorough)
 | 执行器 | 文件 | 机制 |
 |---|---|---|
 | **AgentTask(主路径)** | `cli/review.py` 扩展 | `--file X` 初始化、发出首批任务后退出;`--resume` 自动查找最新未完成 run,读 `results/*.md` → advance → 写新 tasks 或产出终态。任务 = `{task_id, agent, kind, prompt_file}`,prompt 逐字落盘 |
-| **InProcess(CI)** | 现有 `debate.py` | `--llm litellm` 走进程内执行;**重构为调用同一 advance 核心**,消除双实现漂移 |
+| **InProcess(CI)** | 现有 `debate.py` | `host LLM` 走进程内执行;**重构为调用同一 advance 核心**,消除双实现漂移 |
 
 ### 3.3 run-dir 布局(spec FR-11)
 
@@ -120,7 +120,7 @@ awaiting_panel → gate2 → tier(standard | thorough)
 **验收**:
 - [ ] 假 results 文件驱动状态机全路径单测(早停 / standard / thorough / 单 reviewer 池 / 长内容起跑),零 LLM
 - [ ] `--resume` 幂等:同状态重复执行结果一致;中断后续跑正确
-- [ ] `--llm litellm` 路径行为与现网一致(回归)
+- [ ] `host LLM` 路径行为与现网一致(回归)
 - [ ] `majority_vote > 1` 在 agent 模式 = 同 prompt 多任务并行,投票聚合在 advance 内完成
 - [ ] 元审查(depth ≤ 2)任务发出与校准公式正确
 
@@ -194,4 +194,4 @@ judge-manager 的 description 写审查意图关键词(供宿主自动委派);op
 | 宿主 agent 拉起无并行能力 | 顺序执行仍正确(仅慢);协议不假设并行 |
 | 双执行器漂移 | InProcess 重构为复用同一 advance 核心 |
 | claude 宿主需要非 Anthropic 模型 | 已知边界(spec FR-3);跨厂商混编面板用 opencode 宿主 |
-| 回退 | `--llm litellm` 全程保留 = 完整回退路径;Phase 1 独立可回退(git revert) |
+| 回退 | `host LLM` 全程保留 = 完整回退路径;Phase 1 独立可回退(git revert) |

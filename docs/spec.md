@@ -1,4 +1,4 @@
-# 对抗审查系统规格说明书 (Spec)
+﻿# 对抗审查系统规格说明书 (Spec)
 
 ---
 
@@ -81,7 +81,7 @@
 | 7 | **宿主零配置** | judge-manager Agent + 实体 reviewer Agent,LLM 模型/凭证/额度全部来自宿主已有配置,用户零模型配置、零 API key |
 | 8 | **自身可递归审查** | Verdict 序列化为文本后可作为输入再次审查,`--review-depth` 控制递归深度(硬上限 2) |
 | 9 | **通用管道接入** | 任意文本产出物,三种输入方式(`--content` / `--file` / stdin 管道)。不依赖文件系统路径或特定数据结构 |
-| 10 | **纯 LLM 范式 + 可选证据注入** | 轻依赖(litellm/pydantic/typer/yaml),不绑代码 workspace。reviewer 不执行工具,但审查代码产出物时可通过 graphify 图谱证据注入获得代码结构上下文。graphify 不存在时静默降级为纯 LLM 模式 |
+| 10 | **纯 LLM 范式 + 可选证据注入** | 轻依赖(host LLM/pydantic/typer/yaml),不绑代码 workspace。reviewer 不执行工具,但审查代码产出物时可通过 graphify 图谱证据注入获得代码结构上下文。graphify 不存在时静默降级为纯 LLM 模式 |
 | 11 | **主动验证(graphify 证据注入)** | 审查代码产出物时,引擎在调 reviewer 前自动从本地 graphify 知识图谱收集代码结构证据(调用链、依赖关系、跨文件引用),注入 reviewer prompt 的 context 部分。reviewer 仍为纯 LLM,但 prompt 里多了代码结构证据,能验证 finding 是否与代码实际结构一致。替代 AaaJ 的 tree-sitter/BM25/embedding 工具层,无需自建 |
 | 12 | **辩论溯源标记(错误级联防御)** | Phase 2 对抗辩论中,每条引用他人主张须标注认知状态三态标记:`[✓已确认]`/`[✗已反驳]`/`[?未验证]`。不带标记的引用视为无效反驳;`[?未验证]`主张不得作为调整 severity/confidence 的依据。conformity 检测在 Phase 3 检查是否有人基于未验证主张改变了立场。防御"一条幻觉主张在 3 轮内感染全部 reviewer"的级联风险 |
 | 13 | **推理策略多样性** | 每个 reviewer 模板在 frontmatter 声明 `reasoning_strategy`(checklist/inverse/transform/counterfactual/falsification),系统在 system prompt 中注入对应推理策略指引。引擎的 `deterministic_panel` 贪心选择确保面板内至少 2 种不同推理策略。打破"所有 reviewer 共享同一推理范式、共享同一盲区"的问题(DMAD, ICLR 2025) |
@@ -218,9 +218,9 @@ JSON Verdict 核心字段:
 主流场景下,全部 reviewer 的 LLM 能力(模型、凭证、额度)来自宿主 agent 已有配置,系统不得要求用户单独配置模型串或 API key。
 
 - **执行载体**:每次 reviewer 调用 = 宿主内拉起一个匿名 reviewer Agent(FR-10 安装产物);reviewer 的 persona + 审查框架由引擎编译进 task prompt,judge-manager 逐字传给匿名 reviewer 执行;未声明 `model` = 宿主默认模型
-- **宿主命名空间**:codeagent/claude-code 系宿主仅支持 Anthropic 系模型(`opus`/`sonnet`/完整模型 ID);opencode 系宿主支持其已配置的任意 provider(`provider/model` 格式,含自定义网关)。**异构面板**(不同角色不同模型形成对抗)在 litellm 直连模式下完整保留;agent 驱动模式下 reviewer 使用宿主默认模型(匿名槽位),如需异构模型请用 `--llm litellm`
+- **宿主命名空间**:codeagent/claude-code 系宿主仅支持 Anthropic 系模型(`opus`/`sonnet`/完整模型 ID);opencode 系宿主支持其已配置的任意 provider(`provider/model` 格式,含自定义网关)。**异构面板**(不同角色不同模型形成对抗)在 host LLM 直连模式下完整保留;agent 驱动模式下 reviewer 使用宿主默认模型(匿名槽位),如需异构模型请用 `host LLM`
 - **凭证**:完全由宿主管理(登录态/订阅额度/provider key),引擎不接触、不解析、不存储任何凭证
-- **litellm 直连回退**:`--llm litellm` 强制走引擎内置 litellm 后端,服务 CI/无宿主场景;此时模型串为 litellm 命名空间,凭证经环境变量
+- **host LLM 直连回退**:`host LLM` 强制走引擎内置 host LLM 后端,服务 CI/无宿主场景;此时模型串为 host LLM 命名空间,凭证经环境变量
 - 主路径不引入宿主专有的 headless CLI 依赖(见 NFR-7)
 
 ### FR-4: 置信度评分与人工升级
@@ -241,7 +241,7 @@ JSON Verdict 核心字段:
 - `review` 支持三种输入:`--content` / `--file` / stdin 管道;`--file` 的 `.json` 后缀自动提取 verdict 文本(元审查场景)
 - **零参数即全自动**:`agent-judges review --file x.md` 不带流程参数时走渐进式审查(FR-2),全程用户零决策;`--profile fast/standard/thorough` 显式选档;细粒度参数跳过渐进式,按指定参数执行
 - **prepare/resume 接口**(agent 驱动模式):`agent-judges review --file X` 初始化并发出首批任务后退出;`agent-judges review --resume` 消费结果、确定性推进、发出下一批任务或产出终态。运行产物拆分为 logs(`.harness/logs/judges/<run_id>/`:state/tasks/results)与 evidence(`.harness/evidence/judges/<run_id>/`:verdict/report)。driver 协议见 FR-11
-- **direct 模式**(`--llm litellm`):引擎进程内完成全部 LLM 调用,服务 CI/裸机;`--max-cost`/`--model`/`--override-model` 仅此模式有效
+- **direct 模式**(`host LLM`):引擎进程内完成全部 LLM 调用,服务 CI/裸机;`--max-cost`/`--model`/`--override-model` 仅此模式有效
 - `--interactive` 模式保留(低置信度暂停等 stdin 人工裁决;仅 direct 模式可用)
 - 不作为 Python 库嵌入 agent 运行时
 
@@ -255,7 +255,7 @@ JSON Verdict 核心字段:
 - **约束模型**(匿名槽位 + 模板注入):系统提供匿名的辩论 reviewer 槽位(行为框架固定),用户模板只注入"审查视角"(persona + checklist),**不能自定义辩论行为、输出格式、流程编排**——这些由系统固定控制(见 design.md 1.6 节)
 - 用户可自定义任意审查视角模板(如 `security-auditor`、`compliance-reviewer`)
 - **外部审查 skill(知识注入型)**:用户可通过 SKILL.md 格式定义审查知识包,由通用匿名 agent 槽位加载。两种方式:① reviewer 模板通过 `skills: [name]` 字段引用;② CLI `-r skill:<name>` 即席加载。skill 为纯 LLM 知识包(无工具执行),与纯 LLM 审查范式一致
-- reviewer 的 `model` 为可选字段(宿主命名空间),不写 = 宿主默认模型;litellm 直连模式下 `--model`/`--override-model` 语义保留
+- reviewer 的 `model` 为可选字段(宿主命名空间),不写 = 宿主默认模型;host LLM 直连模式下 `--model`/`--override-model` 语义保留
 - 系统内置过程级审查模板(借鉴 CyberAgent 6 轴):过程合规(process-compliance)/欺骗检测(deception-detector)/危险操作扫描(dangerous-operation-scanner),用户传入 agent 执行日志时选择性启用
 
 ### FR-7: 提示词传递审查内容
@@ -303,7 +303,7 @@ JSON Verdict 核心字段:
 
 ### FR-11: 执行模型——prepare/resume 状态机
 
-- **编排核心纯化**:渐进式门控 / 4 阶段推进 / 合成 / 降级全部实现为纯函数;两种执行器共享同一核心——agent 驱动(任务落盘,由 judge-manager 执行)与 litellm 直连(引擎进程内执行)
+- **编排核心纯化**:渐进式门控 / 4 阶段推进 / 合成 / 降级全部实现为纯函数;两种执行器共享同一核心——agent 驱动(任务落盘,由 judge-manager 执行)与 host LLM 直连(引擎进程内执行)
 - **prepare/resume 接口**:`prepare` 初始化运行并发出首批任务后退出;`resume` 消费已有结果、确定性推进、发出下一批任务或产出终态。全部流程判定记录于运行状态与 verdict 的 `route` 字段(可审计)
 - **driver 协议**(judge-manager 必须遵守):循环 = 调 `--resume` → 读任务 → 逐字 prompt 原生拉起对应 Agent → 原始输出落盘 → 循环,直至终态出现;**禁止**改写 prompt / 自行增删任务 / 跳过或代答门控
 - **幂等**:`--resume` 按已有结果推进,重复执行无副作用;中断后可续跑;推进前校验结果完整性,缺失任务不推进
@@ -487,7 +487,7 @@ agent-judges install --platform opencode --project
 
 ### 9.2 凭证继承
 
-LLM 凭证优先从调用方会话环境继承,解析顺序:显式参数 > 环境变量 > litellm 内部回退。
+LLM 凭证优先从调用方会话环境继承,解析顺序:显式参数 > 环境变量 > host LLM 内部回退。
 
 **Claude Code**:`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token` 导出)均可自动继承;Pro/Max 订阅登录(`/login`)的 OAuth 凭证不导出到子进程环境,**不可复用**,需改用 `claude setup-token` 或设置 `ANTHROPIC_API_KEY`。注意:宿主设置 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 时所有凭证会从子进程环境中剥离,需在 `.env` 显式配置或经本地网关访问。
 

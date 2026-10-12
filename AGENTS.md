@@ -35,7 +35,7 @@
   Agent 定义文件 / 原生 subagent 拉起 / shell。
 - `reviewers/*.md` 中 `model` 字段写宿主命名空间：
   claude 系仅 Anthropic 模型（`opus`/`sonnet`/完整 ID）；opencode 系为 `provider/model`。**省略 = 宿主默认模型**。
-- litellm 直连（`--llm litellm`）降级为内部测试设施，仅供 CI / 开发者调试，不在面向用户的文档中体现。
+- host LLM 直连（`host LLM`）降级为内部测试设施，仅供 CI / 开发者调试，不在面向用户的文档中体现。
 
 ### 1.4 CLI 命名与安装
 
@@ -50,8 +50,8 @@
 项目的唯一主路径是宿主 Agent 驱动模式——LLM 能力通过宿主内的 reviewer Agent 访问，CLI 不直接调用 LLM。后续开发以此为核心：
 
 - **强化 agent 模式能力**：prepare/resume 状态机已落地（`engine.py`），继续完善 driver 协议的健壮性（断点续跑、失败重试、超时处理）
-- **消除双实现**：`debate.py` 的 litellm 直连路径与 `engine.py` 的 `advance` 核心并存是技术债。后续将 `debate.py` 重构为复用 `engine.advance`，消除双实现维护负担
-- **litellm 直连降级为内部测试设施**：`--llm litellm` 仅保留给 CI 和开发者调试，不在面向用户的文档中体现，不作为产品路径维护
+- **消除双实现**：`debate.py` 的 host LLM 直连路径与 `engine.py` 的 `advance` 核心并存是技术债。后续将 `debate.py` 重构为复用 `engine.advance`，消除双实现维护负担
+- **host LLM 直连降级为内部测试设施**：`host LLM` 仅保留给 CI 和开发者调试，不在面向用户的文档中体现，不作为产品路径维护
 
 ### 1.6 文档同步义务
 
@@ -66,7 +66,7 @@
 入口层  judge-manager Agent(宿主内,机械执行驱动协议)               [integrations/]
 引擎层  agent-judges CLI: prepare/resume 状态机(门控/辩论/合成/升级)  [src/agent_judges/]
 LLM层   宿主实体 reviewer Agent(模型=宿主配置)                      [src/agent_judges/llm/]
-        (litellm 直连为内部测试设施,见 5.1)
+        (host LLM 直连为内部测试设施,见 5.1)
 ```
 
 关键模块：
@@ -74,7 +74,7 @@ LLM层   宿主实体 reviewer Agent(模型=宿主配置)                      [
 | 模块 | 职责 |
 |---|---|
 | `run_state.py` / `engine.py` | prepare/resume 状态机：`advance(state, results)` 纯函数推进（FR-11） |
-| `debate.py` | 4 阶段辩论编排（litellm 直连路径，技术债：待重构为复用 `engine.advance`，见 5.1） |
+| `debate.py` | 4 阶段辩论编排（host LLM 直连路径，技术债：待重构为复用 `engine.advance`，见 5.1） |
 | `progressive.py` | 两道纯规则门（早停 / 续跑强度）+ ProgressiveDecision 审计记录 |
 | `router.py` | 确定性 reviewer 选择（文件名/内容提示 → 模板）+ PROFILE_MAP 三档 |
 | `reviewer.py` / `skill.py` | reviewer 定义加载（MD frontmatter + persona 正文）/ SKILL.md 知识包 |

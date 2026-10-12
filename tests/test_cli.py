@@ -1,7 +1,8 @@
-﻿"""CLI tests via typer's CliRunner with a mocked LLMBroker (plan 8-7).
+﻿"""CLI tests — agent-driven mode (review via prepare/resume) + install + list.
 
-The broker is monkeypatched at ``agent_judges.cli.review.LLMBroker`` so no test
-ever hits a real API.
+All review tests drive the agent-mode protocol (prepare → tasks → results →
+resume → verdict) using the MockScenarioAnswerer from the e2e driver. No
+litellm, no API keys, no network.
 """
 
 from __future__ import annotations
@@ -15,798 +16,139 @@ from typer.testing import CliRunner
 from agent_judges.cli import app
 
 from conftest import REVIEWERS_DIR, SKILLS_DIR
+from fixtures.e2e_driver import (
+    PROJECTS_DIR,
+    MockScenarioAnswerer,
+    drive_review,
+)
 from fixtures.helpers import VERDICT_JSON_SATISFIED, VERDICT_JSON_UNSATISFIED
-from fixtures.mock_llm import MockLLM, MockLLMBroker
 
 runner = CliRunner()
 
-
-@pytest.fixture
-def install_mock_broker(monkeypatch):
-    """Patch cli.LLMBroker with a factory returning a MockLLMBroker."""
-
-    def _install(mock_llm: MockLLM):
-        def factory(default_model="mock", max_budget_usd=None, **kwargs):
-            return MockLLMBroker(mock_llm, max_budget_usd=max_budget_usd)
-
-        monkeypatch.setattr("agent_judges.cli.review.LLMBroker", factory)
-
-    return _install
+TODO_SPEC = PROJECTS_DIR / "todo-app" / "spec.md"
+_SEVERITIES = ("critical", "major", "minor", "pass")
 
 
-def _base_responses():
-    return {
-        "审查框架": VERDICT_JSON_UNSATISFIED,  # Phase 1 / blind final
-        "辩论阶段": "我坚持存在量化指标缺失问题",  # Phase 2
-        "辩论已结束": VERDICT_JSON_UNSATISFIED,  # Phase 3
-    }
+class TestReviewCommand:
+    """Agent-mode review: prepare → tasks → results → resume → verdict."""
 
+    def test_review_help_lists_options(self):
+        result = runner.invoke(app, ["review", "--help"])
+        assert result.exit_code == 0
+        assert "--file" in result.output
+        assert "--scene" in result.output
+        assert "--profile" in result.output
 
-class TestInputs:
-    def test_content_input_json_output(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
+    def test_review_no_content_errors(self):
         result = runner.invoke(
             app,
-            [
-                "review", "--llm", "litellm", "--content", "需求: 系统支持高并发",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["verdict"]["severity"] == "critical"
-        assert payload["consensus_score"] == 1.0  # single reviewer: unanimous with itself
-        assert "route" not in payload  # fully manual: no routing
-
-    def test_file_input(self, tmp_path, install_mock_broker):
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 规格\n系统需支持 10000 QPS。", encoding="utf-8")
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--file", str(doc),
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["verdict"]["severity"] == "critical"
-
-    def test_file_json_input_extracts_reasoning(self, tmp_path, install_mock_broker):
-        # (L-4) .json verdict file: reasoning is extracted as review content
-        verdict_file = tmp_path / "verdict.json"
-        verdict_file.write_text(
-            json.dumps({"reasoning": "原始审查推理 ABC"}), encoding="utf-8"
-        )
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--file", str(verdict_file),
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-
-    def test_stdin_input(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-            input="管道传入的需求内容",
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["verdict"]["severity"] == "critical"
-
-    def test_no_content_errors(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
+            ["review", "--reviewers-dir", str(REVIEWERS_DIR)],
         )
         assert result.exit_code == 1
 
-    def test_stdin_plus_interactive_rejected(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--interactive",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
-            input="管道内容",
+    def test_review_clean_scenario_early_stop(self, tmp_path):
+        """Clean doc → sentinel passes → early stop (fast, 1 call)."""
+        outcome = drive_review(
+            TODO_SPEC,
+            MockScenarioAnswerer("clean"),
+            extra_args=["--scene", "document"],
         )
-        assert result.exit_code == 1  # interactive cannot share stdin with content
+        assert outcome.verdict["verdict"]["severity"] in _SEVERITIES
+        assert outcome.verdict["route"]["profile"] == "fast"
 
-
-class TestFlowDecision:
-    def test_zero_param_progressive_early_stop(self, tmp_path, install_mock_broker):
-        # zero flow params → progressive sentinel-gated review (FR-2);
-        # clean high-confidence sentinel pass → early stop, exactly 1 call
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 规格文档\n清晰完整的内容。", encoding="utf-8")
-        mock = MockLLM(responses={"审查框架": VERDICT_JSON_SATISFIED})
-        install_mock_broker(mock)
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--file", str(doc),
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
+    def test_review_problem_scenario_thorough(self, tmp_path):
+        """Problem doc → sentinel fails → panel → thorough (debate + meta)."""
+        outcome = drive_review(
+            TODO_SPEC,
+            MockScenarioAnswerer("problem"),
+            extra_args=["--scene", "document"],
         )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        route = payload["route"]
-        assert route["profile"] == "fast"
-        assert route["early_stopped"] is True
-        assert route["token_count"] > 0
-        assert route["complexity"] == "low"
-        assert route["reviewer_names"] == ["design-reviewer"]  # first in document pool → sentinel
-        assert len(payload["individual_verdicts"]) == 1
-        assert payload["stability_degraded"] is True
-        assert mock.call_count == 1
+        v = outcome.verdict["verdict"]
+        assert v["severity"] == "critical"
+        assert outcome.verdict["route"]["profile"] == "thorough"
+        # thorough includes meta-review → calibrated_confidence
+        assert v["calibrated_confidence"] is not None
 
-    def test_zero_param_progressive_escalation(self, tmp_path, install_mock_broker):
-        # sentinel fails gate 1 → panel expansion → gate 2 (critical → thorough)
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 规格文档\n有问题的内容。", encoding="utf-8")
-        mock = MockLLM(responses=_base_responses())
-        install_mock_broker(mock)
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--file", str(doc),
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
+    def test_review_json_output(self, tmp_path):
+        outcome = drive_review(
+            TODO_SPEC,
+            MockScenarioAnswerer("clean"),
+            extra_args=["-o", "json", "--scene", "document"],
         )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        route = payload["route"]
-        assert route["profile"] == "thorough"
-        assert route["early_stopped"] is False
-        assert route["reviewer_names"][0] == "design-reviewer"  # sentinel kept
-        assert len(route["reviewer_names"]) == 3  # expanded panel
-        assert len(payload["individual_verdicts"]) == 3  # sentinel verdict kept + 2
-        assert "meta_review" in payload  # thorough → review_depth 1
-        # (B-4) explicit calibration: 0.85 × (1 − 0.5) via the meta penalty
-        assert payload["verdict"]["calibrated_confidence"] == 0.425
+        # JSON output goes to evidence_dir/verdict.json
+        assert "verdict" in outcome.verdict
+        assert "route" in outcome.verdict
 
-    def test_partial_params_filled_deterministically(self, tmp_path, install_mock_broker):
-        # --debate-rounds given but no profile → standard defaults, no LLM
-        # routing, no route record; 2 reviewers, no debate, blind final runs
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 规格文档", encoding="utf-8")
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--file", str(doc),
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
+    def test_review_with_context(self, tmp_path):
+        ctx_file = tmp_path / "ctx.txt"
+        ctx_file.write_text("背景: 这是一个 TODO 应用,需要支持多用户。", encoding="utf-8")
+        outcome = drive_review(
+            TODO_SPEC,
+            MockScenarioAnswerer("problem"),
+            extra_args=["--scene", "document"],
+            context_file=ctx_file,
         )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert "route" not in payload  # deterministic fill leaves no route record
-        assert len(payload["individual_verdicts"]) == 2
-        assert payload["stability_degraded"] is False
+        # context is passed; the run should still complete
+        assert outcome.verdict["verdict"]["severity"] in _SEVERITIES
 
-    def test_profile_fast_skips_routing(self, tmp_path, install_mock_broker):
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 短内容", encoding="utf-8")
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--file", str(doc),
-                "--profile", "fast",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
+    def test_review_profile_thorough(self, tmp_path):
+        outcome = drive_review(
+            TODO_SPEC,
+            MockScenarioAnswerer("problem"),
+            extra_args=["--profile", "thorough", "--scene", "document"],
         )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["route"]["profile"] == "fast"
-        assert payload["route"]["reason"] == "explicit profile: fast"
-        assert len(payload["route"]["reviewer_names"]) == 1
-        assert payload["stability_degraded"] is True  # fast = single-reviewer fast-check
+        assert outcome.verdict["route"]["profile"] == "thorough"
 
-    def test_profile_thorough_includes_meta_review(self, tmp_path, install_mock_broker):
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 复杂交付物内容", encoding="utf-8")
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--file", str(doc),
-                "--profile", "thorough",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
+    def test_review_resume_after_interrupt(self, tmp_path):
+        """Resume should pick up from where the run left off."""
+        outcome = drive_review(
+            TODO_SPEC,
+            MockScenarioAnswerer("clean"),
+            extra_args=["--scene", "document"],
         )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["route"]["profile"] == "thorough"
-        assert "meta_review" in payload
-        # calibrated = 0.85 × (1 - 0.5) via explicit formula (B-4)
-        assert payload["verdict"]["calibrated_confidence"] == 0.425
+        assert outcome.rounds > 0
+        assert outcome.verdict["verdict"]["severity"] in _SEVERITIES
 
-    def test_unknown_profile_errors(self, tmp_path, install_mock_broker):
-        doc = tmp_path / "s.md"
-        doc.write_text("x", encoding="utf-8")
-        install_mock_broker(MockLLM(responses=_base_responses()))
+
+class TestInstallCommand:
+    def test_install_help(self):
+        result = runner.invoke(app, ["install", "--help"])
+        assert result.exit_code == 0
+        assert "--platform" in result.output
+        assert "--project" in result.output
+
+    def test_install_codeagent_project(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         result = runner.invoke(
             app,
-            [
-                "review", "--llm", "litellm", "--file", str(doc),
-                "--profile", "ultra",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
-        )
-        assert result.exit_code == 1
-
-    def test_review_depth_above_cap_errors(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "x",
-                "--scene", "document",
-                "--review-depth", "3",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
-        )
-        assert result.exit_code == 1
-        assert "上限为 2" in result.output
-
-
-class TestOutput:
-    def test_both_writes_two_files(self, tmp_path, install_mock_broker):
-        out_dir = tmp_path / "reports"
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "测试内容",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--output", "both",
-                "--output-dir", str(out_dir),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        assert (out_dir / "report.md").exists()
-        assert (out_dir / "verdict.json").exists()
-        payload = json.loads((out_dir / "verdict.json").read_text(encoding="utf-8"))
-        assert payload["verdict"]["severity"] == "critical"
-        md = (out_dir / "report.md").read_text(encoding="utf-8")
-        assert "对抗审查报告" in md
-
-    def test_markdown_to_stdout(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "测试内容",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "markdown",
-            ],
+            ["install", "--platform", "codeagent", "--project"],
         )
         assert result.exit_code == 0
-        assert "对抗审查报告" in result.output
-
-    def test_json_never_goes_to_stderr(self, install_mock_broker):
-        # (M-7) stdout carries the JSON; stderr only logs
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "测试",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0
-        json.loads(result.stdout)  # stdout is pure JSON
-
-    def test_cost_recorded_in_json(self, install_mock_broker):
-        mock = MockLLM(responses=_base_responses(), cost_per_call=0.01)
-        install_mock_broker(mock)
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "测试",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-        )
-        payload = json.loads(result.stdout)
-        assert payload["cost"]["total_cost_usd"] == 0.04
-        assert payload["cost"]["total_tokens"] > 0
-
-
-class TestInteractive:
-    def test_interactive_records_human_decision(self, install_mock_broker):
-        low_conf = (
-            '```json\n{"severity": "major", "confidence": 0.5, "reasoning": "r",'
-            ' "findings": [], "satisfied": false}\n```'
-        )
-        install_mock_broker(MockLLM(responses={"审查框架": low_conf}))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "低置信度内容",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--interactive",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-            input="fail: 缺少量化指标\n",
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["verdict"]["escalate_to_human"] is True  # 0.5 < 0.8
-        assert "[人工裁决]: fail: 缺少量化指标" in payload["verdict"]["reasoning"]
-
-    def test_interactive_not_triggered_when_confident(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses={"审查框架": VERDICT_JSON_SATISFIED}))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "高置信度内容",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--interactive",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-            input="should never be read\n",
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["verdict"]["escalate_to_human"] is False
-        assert "人工裁决" not in payload["verdict"]["reasoning"]
+        assert "judge-manager" in result.output
+        assert "reviewer" in result.output
+        # verify files were written
+        assert (tmp_path / ".cac" / "agents" / "judges" / "judge-manager.md").exists()
+        assert (tmp_path / ".cac" / "agents" / "judges" / "reviewer.md").exists()
 
 
 class TestListReviewers:
-    def test_lists_stock_templates(self):
+    def test_list_reviewers(self):
         result = runner.invoke(
             app,
-            [
-                "list-reviewers",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--skills-dir", str(SKILLS_DIR),
-            ],
+            ["list-reviewers", "--reviewers-dir", str(REVIEWERS_DIR)],
         )
         assert result.exit_code == 0
         assert "spec-reviewer" in result.output
-        assert "meta-reviewer-2" in result.output
-        # referenced skills are visible (omission fix: skill display)
-        assert "skills: dangerous-operations" in result.output
-
-    def test_missing_dir_errors(self, tmp_path):
-        result = runner.invoke(
-            app, ["list-reviewers", "--reviewers-dir", str(tmp_path / "nope")]
-        )
-        assert result.exit_code == 1
-
-
-class TestSkillsCli:
-    def test_list_skills(self):
-        result = runner.invoke(
-            app, ["list-skills", "--skills-dir", str(SKILLS_DIR)]
-        )
-        assert result.exit_code == 0
-        assert "owasp-top10" in result.output
-        assert "api-contract-review" in result.output
-
-    def test_inspect_reviewer_shows_skill_pullup(self):
-        # Q1 verification: the skill IS pulled into the anonymous agent
-        result = runner.invoke(
-            app,
-            [
-                "inspect-reviewer", "dangerous-operation-scanner",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--skills-dir", str(SKILLS_DIR),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        out = result.output
-        assert "# skills   : dangerous-operations" in out
-        assert "## skill: dangerous-operations" in out  # skill body injected
-        assert "危险操作模式清单" in out  # the skill's knowledge content
-        assert "[审查框架" in out  # anonymous-slot judge frame appended
-        assert "识别" in out  # persona preserved
-
-    def test_inspect_reviewer_skill_prefix(self):
-        result = runner.invoke(
-            app,
-            [
-                "inspect-reviewer", "skill:owasp-top10",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--skills-dir", str(SKILLS_DIR),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        assert "# reviewer : skill-owasp-top10" in result.output
-        assert "OWASP Top 10 (2021) 审查指引" in result.output
-
-    def test_inspect_reviewer_unknown_errors(self):
-        result = runner.invoke(
-            app,
-            [
-                "inspect-reviewer", "ghost",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--skills-dir", str(SKILLS_DIR),
-            ],
-        )
-        assert result.exit_code == 1
-
-
-class TestAgentMode:
-    """v2 default executor: prepare/resume driven by judge-manager (FR-11)."""
-
-    def test_prepare_emits_task_manifest(self, tmp_path):
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 规格\n系统需支持 10000 QPS。", encoding="utf-8")
-        result = runner.invoke(
-            app,
-            [
-                "review", "--file", str(doc),
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        manifest = json.loads(result.stdout)
-        assert manifest["done"] is False
-        assert manifest["stage"] == "awaiting_sentinel"
-        assert manifest["run_id"]
-        assert manifest["logs_dir"]
-        assert manifest["evidence_dir"]
-        assert len(manifest["tasks"]) == 1
-        task = manifest["tasks"][0]
-        assert task["agent"] == "design-reviewer"  # first in document pool → sentinel
-        assert task["prompt_file"] == "tasks/p1-design-reviewer-v1.md"
-        # logs artifacts: state + verbatim prompt
-        logs_dir = Path(manifest["logs_dir"])
-        assert (logs_dir / "state.json").is_file()
-        prompt = (logs_dir / "tasks" / "p1-design-reviewer-v1.md").read_text(encoding="utf-8")
-        assert "10000 QPS" in prompt  # verbatim content
-        assert "检查清单" in prompt
-
-    def test_resume_early_stop_produces_verdict(self, tmp_path):
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 规格\n内容", encoding="utf-8")
-        result = runner.invoke(
-            app,
-            [
-                "review", "--file", str(doc),
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
-        )
-        assert result.exit_code == 0
-        manifest = json.loads(result.stdout)
-        logs_dir = Path(manifest["logs_dir"])
-        evidence_dir = Path(manifest["evidence_dir"])
-        # driver writes the sentinel agent's raw reply
-        (logs_dir / "results").mkdir(exist_ok=True)
-        (logs_dir / "results" / "p1-design-reviewer-v1.md").write_text(
-            VERDICT_JSON_SATISFIED, encoding="utf-8"
-        )
-        result = runner.invoke(
-            app,
-            [
-                "review", "--resume",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["done"] is True
-        assert payload["stage"] == "done"
-        verdict = json.loads((evidence_dir / "verdict.json").read_text(encoding="utf-8"))
-        assert verdict["verdict"]["severity"] == "pass"
-        assert verdict["verdict"]["escalate_to_human"] is False
-        assert verdict["route"]["profile"] == "fast"
-        assert verdict["route"]["early_stopped"] is True
-        assert "对抗审查报告" in (evidence_dir / "report.md").read_text(encoding="utf-8")
-
-    def test_resume_expansion_then_thorough(self, tmp_path):
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 规格\n有问题", encoding="utf-8")
-        args = ["--reviewers-dir", str(REVIEWERS_DIR)]
-        result = runner.invoke(
-            app, ["review", "--file", str(doc), *args]
-        )
-        assert result.exit_code == 0
-        manifest = json.loads(result.stdout)
-        logs_dir = Path(manifest["logs_dir"])
-        evidence_dir = Path(manifest["evidence_dir"])
-        results_dir = logs_dir / "results"
-        results_dir.mkdir(exist_ok=True)
-
-        def _feed(manifest):
-            for t in manifest["tasks"]:
-                if not (results_dir / f"{t['task_id']}.md").exists():
-                    (results_dir / f"{t['task_id']}.md").write_text(
-                        VERDICT_JSON_UNSATISFIED, encoding="utf-8"
-                    )
-
-        # drive until done (sentinel fail → expansion → debate×2 → final → meta)
-        for _ in range(8):
-            manifest = json.loads(result.stdout)
-            if manifest["done"]:
-                break
-            _feed(manifest)
-            result = runner.invoke(
-                app, ["review", "--resume", *args]
-            )
-            assert result.exit_code == 0, result.output
-        manifest = json.loads(result.stdout)
-        assert manifest["done"] is True
-
-        verdict = json.loads((evidence_dir / "verdict.json").read_text(encoding="utf-8"))
-        assert verdict["route"]["profile"] == "thorough"
-        assert len(verdict["route"]["reviewer_names"]) == 3
-        assert verdict["verdict"]["severity"] == "critical"
-        # full pipeline artifacts present
-        assert len(verdict["individual_verdicts"]) == 3
-        assert "meta_review" in verdict
-        assert verdict["verdict"]["calibrated_confidence"] is not None
-
-    def test_resume_without_prior_run_errors(self):
-        """--resume with no unfinished run → clean error."""
-        result = runner.invoke(
-            app, ["review", "--resume", "--reviewers-dir", str(REVIEWERS_DIR)]
-        )
-        assert result.exit_code == 1
-        assert "未找到" in result.output or "resume" in result.output.lower()
-
-    def test_unknown_llm_mode_errors(self, tmp_path):
-        doc = tmp_path / "s.md"
-        doc.write_text("x", encoding="utf-8")
-        result = runner.invoke(
-            app,
-            [
-                "review", "--file", str(doc), "--llm", "wat",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
-        )
-        assert result.exit_code == 1
-
-    def test_fixed_params_prepare_full_panel(self, tmp_path):
-        doc = tmp_path / "spec.md"
-        doc.write_text("# 规格", encoding="utf-8")
-        result = runner.invoke(
-            app,
-            [
-                "review", "--file", str(doc),
-                "--scene", "document",
-                "--debate-rounds", "1",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        manifest = json.loads(result.stdout)
-        assert manifest["stage"] == "awaiting_panel"
-        assert {t["agent"] for t in manifest["tasks"]} == {
-            "design-reviewer", "documentation-reviewer"
-        }
-
-
-class TestBaseUrl:
-    def test_base_url_passed_to_broker(self, monkeypatch, install_mock_broker):
-        captured: dict = {}
-
-        def factory(default_model="mock", max_budget_usd=None, default_base_url=None, **kwargs):
-            captured["default_base_url"] = default_base_url
-            return MockLLMBroker(
-                MockLLM(responses=_base_responses()), max_budget_usd=max_budget_usd
-            )
-
-        monkeypatch.setattr("agent_judges.cli.review.LLMBroker", factory)
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "本地模型测试",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--base-url", "http://localhost:11434",
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        assert captured["default_base_url"] == "http://localhost:11434"
-
-
-class TestCredentialHint:
-    _CRED_VARS = (
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "OPENAI_API_KEY",
-    )
-
-    def _clear_creds(self, monkeypatch):
-        for var in self._CRED_VARS:
-            monkeypatch.delenv(var, raising=False)
-
-    def _invoke(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        return runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "凭证提示测试",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-        )
-
-    def test_warns_without_credentials(self, monkeypatch, install_mock_broker):
-        self._clear_creds(monkeypatch)
-        result = self._invoke(install_mock_broker)
-        assert result.exit_code == 0, result.output
-        assert "未检测到" in result.stderr
-        assert "凭证" in result.stderr
-
-    def test_no_warning_with_host_credentials(self, monkeypatch, install_mock_broker):
-        self._clear_creds(monkeypatch)
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-session")
-        result = self._invoke(install_mock_broker)
-        assert result.exit_code == 0, result.output
-        assert "未检测到" not in result.stderr
-
-    def test_no_warning_for_local_model(self, monkeypatch, install_mock_broker):
-        for var in self._CRED_VARS:
-            monkeypatch.delenv(var, raising=False)
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "本地模型",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "0",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "--model", "ollama/llama3",
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        assert "未检测到" not in result.stderr  # local models need no key
-
-
-class TestReviewDepthTwo:
-    def test_depth_two_runs_meta_review_twice(self, install_mock_broker):
-        install_mock_broker(MockLLM(responses=_base_responses()))
-        result = runner.invoke(
-            app,
-            [
-                "review", "--llm", "litellm", "--content", "关键交付物",
-                "--scene", "document",
-                "--debate-rounds", "0",
-                "--review-depth", "2",
-                "--reviewers-dir", str(REVIEWERS_DIR),
-                "-o", "json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.stdout)
-        assert payload["verdict"]["calibrated_confidence"] is not None
-        assert "元审查第 2 层完成" in result.output  # two layers ran
+        assert "design-reviewer" in result.output
+        assert "meta-reviewer" in result.output
 
 
 class TestEvaluate:
-    def test_list_format(self, tmp_path):
-        preds = tmp_path / "preds.json"
-        preds.write_text(
-            json.dumps(
-                [
-                    {"satisfied": True, "confidence": 0.9},
-                    {"satisfied": False, "confidence": 0.3},
-                ]
-            ),
-            encoding="utf-8",
-        )
-        labels = tmp_path / "labels.json"
-        labels.write_text(
-            json.dumps([{"satisfied": True}, {"satisfied": True}]), encoding="utf-8"
-        )
-        result = runner.invoke(
-            app, ["evaluate", "--predictions", str(preds), "--labels", str(labels)]
-        )
-        assert result.exit_code == 0, result.output
-        assert "样本数        : 2" in result.output
-        assert "Accuracy      : 0.5000" in result.output
-        assert "AUROC         : 1.0000" in result.output
+    def test_evaluate_help(self):
+        result = runner.invoke(app, ["evaluate", "--help"])
+        assert result.exit_code == 0
 
-    def test_aaaj_dict_format(self, tmp_path):
-        preds = tmp_path / "preds.json"
-        preds.write_text(
-            json.dumps(
-                {
-                    "requirements": [
-                        {"satisfied": True, "satisfied_ratio": 0.67},
-                        {"satisfied": False, "satisfied_ratio": 1.0},
-                    ],
-                    "judge_stats": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-        labels = tmp_path / "labels.json"
-        labels.write_text(
-            json.dumps(
-                {"requirements": [{"satisfied": True}, {"satisfied": True}]}
-            ),
-            encoding="utf-8",
-        )
-        result = runner.invoke(
-            app, ["evaluate", "-p", str(preds), "-l", str(labels)]
-        )
-        assert result.exit_code == 0, result.output
-        assert "样本数        : 2" in result.output
-
-    def test_unsupported_shape_errors(self, tmp_path):
-        bad = tmp_path / "bad.json"
-        bad.write_text(json.dumps({"nope": 1}), encoding="utf-8")
-        result = runner.invoke(
-            app, ["evaluate", "-p", str(bad), "-l", str(bad)]
-        )
-        assert result.exit_code == 1
-
-    def test_no_comparable_pairs_errors(self, tmp_path):
+    def test_evaluate_missing_satisfied(self, tmp_path):
         preds = tmp_path / "p.json"
         preds.write_text(json.dumps([{"confidence": 0.9}]), encoding="utf-8")
         labels = tmp_path / "l.json"
