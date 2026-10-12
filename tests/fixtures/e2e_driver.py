@@ -2,14 +2,13 @@
 
 Mirrors ``src/agent_judges/integrations/<host>/agent/judge-manager.md``:
 
-    prepare (``review --file ... --run-dir RUN``) → for each manifest task:
-    read ``tasks/<id>.md`` verbatim → answer (mock scenario or real LLM) →
-    write raw text to ``results/<id>.md`` → ``review --resume --run-dir RUN``
-    → repeat until ``done: true`` → read ``verdict.json``.
+    prepare (``review --file ...``) -> for each manifest task:
+    read ``tasks/<id>.md`` verbatim -> answer (mock scenario) ->
+    write raw text to ``results/<id>.md`` -> ``review --resume``
+    -> repeat until ``done: true`` -> read ``verdict.json``.
 
 Used by:
-- ``tests/test_e2e.py`` — automated e2e (mock scenarios: zero token;
-  integration marker: real LLM)
+- ``tests/test_e2e.py`` — automated e2e (mock scenarios: zero token)
 - ``scripts/e2e_review.py`` — manual runs producing readable reports
 
 This module must stay importable WITHOUT pytest (plain script usage).
@@ -25,7 +24,6 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from agent_judges.cli import app
-from agent_judges.utils.truncate import truncate_string
 
 __all__ = [
     "PROJECTS_DIR",
@@ -33,7 +31,6 @@ __all__ = [
     "SKILLS_DIR",
     "RunOutcome",
     "MockScenarioAnswerer",
-    "LitellmAnswerer",
     "drive_review",
 ]
 
@@ -102,11 +99,11 @@ class RunOutcome:
 class MockScenarioAnswerer:
     """Deterministic scenario answering — zero token, full state-machine run.
 
-    ``clean``   → every reviewer passes with high confidence (Gate 1 early
-                  stop on short content / standard continuation on long).
-    ``problem`` → sentinel + panel report critical findings (Gate 2 →
-                  thorough: 2 debate rounds + blind final + meta review with
-                  a −0.2 confidence adjustment → escalation).
+    ``clean``   -> every reviewer passes with high confidence (Gate 1 early
+                   stop on short content / standard continuation on long).
+    ``problem`` -> sentinel + panel report critical findings (Gate 2 ->
+                   thorough: 2 debate rounds + blind final + meta review with
+                   a -0.2 confidence adjustment -> escalation).
     """
 
     def __init__(self, scenario: str = "problem"):
@@ -139,43 +136,6 @@ class MockScenarioAnswerer:
         return f"mock scenario={self.scenario}, calls={self.calls}"
 
 
-class LitellmAnswerer:
-    """Real-LLM answering: task prompt includes the reviewer persona + judge
-    frame (anonymous-agent design), passed through verbatim (truncation-guarded)."""
-
-    def __init__(
-        self,
-        model: str = "anthropic/claude-sonnet-4-20250514",
-        base_url: str | None = None,
-        max_calls: int = 120,
-        max_prompt_tokens: int = 50000,
-    ):
-        from agent_judges.llm.provider import LLM
-
-        self._llm = LLM(model=model, base_url=base_url)
-        self._max_calls = max_calls
-        self._max_prompt_tokens = max_prompt_tokens
-        self.calls = 0
-
-    def answer(self, task: dict, prompt: str) -> str:
-        if self.calls >= self._max_calls:
-            raise RuntimeError(
-                f"e2e driver exceeded max_calls={self._max_calls} LLM calls — "
-                "aborting the run (raise --max-calls if this was expected)"
-            )
-        # The engine compiles the reviewer persona + system-fixed judge frame
-        # into the task prompt (anonymous-agent design). Pass the full prompt
-        # as the user message — no separate system prompt lookup needed.
-        user = truncate_string(prompt, max_tokens=self._max_prompt_tokens)
-        self.calls += 1
-        return self._llm.complete("", user)
-
-    def stats(self) -> str:
-        tokens = self._llm.total_input_tokens + self._llm.total_output_tokens
-        cost = self._llm.cost.accumulated_cost
-        return f"model={self._llm.model_name}, calls={self.calls}, tokens={tokens}, cost=${cost:.4f}"
-
-
 def _invoke(args: list[str]) -> dict:
     result = runner.invoke(app, args)
     if result.exit_code != 0:
@@ -187,7 +147,7 @@ def _invoke(args: list[str]) -> dict:
 
 def drive_review(
     doc: Path,
-    answerer: MockScenarioAnswerer | LitellmAnswerer,
+    answerer: MockScenarioAnswerer,
     *,
     context_file: Path | None = None,
     extra_args: list[str] | None = None,
@@ -205,7 +165,7 @@ def drive_review(
         "--skills-dir", str(SKILLS_DIR),
     ]
     args = [
-        "review", "--llm", "agent",
+        "review",
         "--file", str(doc),
         *common,
         *(extra_args or []),

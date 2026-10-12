@@ -1,18 +1,16 @@
-﻿"""parse_verdict degradation + run_majority_vote tests (plan 8-3)."""
+﻿"""parse_verdict degradation tests (plan 8-3)."""
 
 from __future__ import annotations
 
 import pytest
 
-from agent_judges.judge import parse_verdict, run_majority_vote
+from agent_judges.judge import parse_verdict
 from agent_judges.types import Finding, Severity, Verdict
 
 from fixtures.helpers import (
     VERDICT_JSON_SATISFIED,
     VERDICT_JSON_UNSATISFIED,
-    make_config,
 )
-from fixtures.mock_llm import MockLLM
 
 
 class TestParseVerdict:
@@ -105,51 +103,3 @@ class TestSeverityEnum:
         assert max(strings) == "minor"  # the original bug
         enums = [Severity.CRITICAL, Severity.MINOR]
         assert max(enums, key=lambda s: s.rank) == Severity.CRITICAL
-
-
-class TestRunMajorityVote:
-    def _config(self, votes: int = 3):
-        return make_config(name="voter", majority_vote=votes)
-
-    def test_unanimous_satisfied(self):
-        llm = MockLLM(responses={"voter": VERDICT_JSON_SATISFIED})
-        v = run_majority_vote(llm, self._config(), "prompt", votes=3)
-        assert v.satisfied is True
-        assert v.confidence == 1.0  # max(1.0, 0.0)
-        assert llm.call_count == 3
-
-    def test_majority_by_one_vote(self):
-        # sequential responses: 2 satisfied + 1 unsatisfied
-        llm = MockLLM(
-            responses={
-                "voter": [
-                    VERDICT_JSON_SATISFIED,
-                    VERDICT_JSON_UNSATISFIED,
-                    VERDICT_JSON_SATISFIED,
-                ]
-            }
-        )
-        v = run_majority_vote(llm, self._config(), "prompt", votes=3)
-        assert v.satisfied is True
-        assert v.confidence == round(2 / 3, 4)
-
-    def test_minority_unsatisfied(self):
-        llm = MockLLM(
-            responses={
-                "voter": [
-                    VERDICT_JSON_UNSATISFIED,
-                    VERDICT_JSON_SATISFIED,
-                    VERDICT_JSON_SATISFIED,
-                ]
-            }
-        )
-        v = run_majority_vote(llm, self._config(), "prompt", votes=3)
-        assert v.satisfied is True
-        # max severity across votes wins (B-1)
-        assert v.severity == Severity.CRITICAL
-
-    def test_all_unsatisfied_confidence_is_one(self):
-        llm = MockLLM(responses={"voter": VERDICT_JSON_UNSATISFIED})
-        v = run_majority_vote(llm, self._config(), "prompt", votes=3)
-        assert v.satisfied is False
-        assert v.confidence == 1.0

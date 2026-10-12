@@ -7,26 +7,29 @@ value.
 (B-4) Calibration uses an *explicit formula*, never a blind overwrite of
 the original confidence by the meta-reviewer's own confidence:
 
-    calibrated = original_confidence × (1 - meta_penalty)
+    calibrated = original_confidence * (1 - meta_penalty)
 
 with meta_penalty from the meta-verdict's most severe severity:
-critical → 0.5, major → 0.3, minor → 0.1, pass → 0.0.
+critical -> 0.5, major -> 0.3, minor -> 0.1, pass -> 0.0.
 
 If the meta-reviewer emits an explicit ``confidence_adjustment``
 (-1.0 ~ +1.0), the values are blended:
 
     adjusted = clamp(original + adjustment, 0, 1)
     calibrated = (calibrated + adjusted) / 2
+
+The agent-driven path (engine.py) drives the meta-review phases via the
+prepare/resume state machine; this module retains only the pure functions
+that the engine calls.
 """
 
 import logging
 
-from .debate import DebateOrchestrator, DebateResult
 from .types import Severity, Verdict
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MetaReviewer", "calibrate_confidence", "serialize_verdict"]
+__all__ = ["calibrate_confidence", "serialize_verdict"]
 
 _SEVERITY_PENALTY: dict[Severity, float] = {
     Severity.CRITICAL: 0.5,
@@ -39,8 +42,7 @@ _SEVERITY_PENALTY: dict[Severity, float] = {
 def calibrate_confidence(original_verdict: Verdict, meta_verdict: Verdict) -> float:
     """(B-4) Explicit calibration formula — see module docstring.
 
-    Pure function shared by ``MetaReviewer`` (in-process path) and the
-    engine (agent-driven path).
+    Pure function shared by the engine (agent-driven path).
     """
     original = original_verdict.confidence
 
@@ -77,52 +79,3 @@ def serialize_verdict(verdict: Verdict, original_content: str) -> str:
         f"作为元审查者,请判断上述审查报告是否可信。"
         f"输出 confidence_adjustment (-1.0 ~ +1.0) 表示对原始置信度的调整建议。"
     )
-
-
-class MetaReviewer:
-    """Re-reviews a first-level review verdict and calibrates its confidence.
-
-    (B-3): uses at least 2 meta-reviewers to form a real adversarial debate.
-    """
-
-    DEFAULT_META_REVIEWERS = ["meta-reviewer", "meta-reviewer-2"]
-
-    def __init__(
-        self,
-        orchestrator: DebateOrchestrator,
-        meta_reviewer_names: list[str] | None = None,
-    ):
-        self.orchestrator = orchestrator
-        self.meta_reviewer_names = (
-            meta_reviewer_names or self.DEFAULT_META_REVIEWERS
-        )
-
-    def review(
-        self,
-        original_content: str,
-        original_verdict: Verdict,
-    ) -> tuple[Verdict, DebateResult]:
-        """Returns (calibrated original verdict, meta-review DebateResult)."""
-        verdict_text = self._serialize_verdict(original_verdict, original_content)
-
-        # (B-3) multiple meta-reviewers debate (usually 1 round is enough)
-        meta_result = self.orchestrator.run(
-            content=verdict_text,
-            reviewer_names=self.meta_reviewer_names,
-            context=original_content,  # original content for evidence backtracking
-        )
-
-        # (B-4) explicit calibration formula (module-level pure function)
-        calibrated = calibrate_confidence(original_verdict, meta_result.final_verdict)
-        original_verdict.calibrated_confidence = calibrated
-        return original_verdict, meta_result
-
-    def _calibrate_confidence(
-        self, original_verdict: Verdict, meta_verdict: Verdict
-    ) -> float:
-        """(kept for API compat) delegates to the module-level function."""
-        return calibrate_confidence(original_verdict, meta_verdict)
-
-    def _serialize_verdict(self, verdict: Verdict, original_content: str) -> str:
-        """(kept for API compat) delegates to the module-level function."""
-        return serialize_verdict(verdict, original_content)

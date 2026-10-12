@@ -239,7 +239,7 @@ def _emit_final(
     route = build_route_decision(state)
     paths = run_dir_layout(run_id)
 
-    json_out = render_json(result, state.threshold, meta_result, None, route)
+    json_out = render_json(result, state.threshold, meta_result, route)
     md = render_markdown(result, state.threshold, meta_result, route)
     paths["verdict"].write_text(json_out, encoding="utf-8")
     paths["report"].write_text(md, encoding="utf-8")

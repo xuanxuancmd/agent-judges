@@ -1,9 +1,12 @@
-﻿"""DebateOrchestrator tests: synthesis, consensus, stability, parallel
-degradation, fast-check mode, budget short-circuit (plan 8-4)."""
+﻿"""Pure-function tests: synthesis, consensus, stability, conformity,
+prompt builders, provenance tagging, agreement intensity, reasoning strategy.
+
+The DebateOrchestrator (in-process litellm direct mode) has been removed;
+these tests cover the pure functions from consensus.py, prompts/, and
+router.py that the agent-driven engine.py path also depends on.
+"""
 
 from __future__ import annotations
-
-import time
 
 from agent_judges.consensus import (
     compute_consensus,
@@ -11,26 +14,13 @@ from agent_judges.consensus import (
     detect_conformity,
     synthesize_verdict,
 )
-from agent_judges.debate import DebateOrchestrator
 from agent_judges.types import Finding, Severity
 
 from fixtures.helpers import (
-    VERDICT_JSON_SATISFIED,
-    VERDICT_JSON_UNSATISFIED,
     make_config,
     make_finding,
-    make_registry,
     make_verdict,
 )
-from fixtures.mock_llm import MockLLM, MockLLMBroker
-
-
-def _orchestrator(mock_llm, *reviewers, debate_rounds=2, max_budget_usd=None):
-    broker = MockLLMBroker(mock_llm, max_budget_usd=max_budget_usd)
-    registry = make_registry(*reviewers)
-    return DebateOrchestrator(
-        registry=registry, broker=broker, debate_rounds=debate_rounds
-    )
 
 
 class TestSynthesize:
@@ -134,7 +124,7 @@ class TestConformity:
         )
 
     def test_no_flip_no_warning(self):
-        """Reviewers who don't change their satisfied position → no warning."""
+        """Reviewers who don't change their satisfied position -> no warning."""
         individual = [make_verdict(Severity.PASS, satisfied=True),
                       make_verdict(Severity.MAJOR, satisfied=False)]
         final = [make_verdict(Severity.PASS, satisfied=True),
@@ -142,22 +132,22 @@ class TestConformity:
         assert detect_conformity(individual, final) == []
 
     def test_flip_with_new_finding_no_warning(self):
-        """Reviewer flips but adds a new finding → not conformity."""
+        """Reviewer flips but adds a new finding -> not conformity."""
         ind = make_verdict(Severity.MAJOR, satisfied=False)
         fin = make_verdict(Severity.PASS, satisfied=True)
         fin.findings = [self._finding("new-issue")]
         assert detect_conformity([ind], [fin]) == []
 
     def test_flip_without_new_finding_warns(self):
-        """Reviewer flips satisfied but adds no new finding → warning."""
+        """Reviewer flips satisfied but adds no new finding -> warning."""
         ind = make_verdict(Severity.MAJOR, satisfied=False)
         fin = make_verdict(Severity.PASS, satisfied=True)
         warnings = detect_conformity([ind], [fin])
         assert len(warnings) == 1
-        assert "False→True" in warnings[0]
+        assert "False->True" in warnings[0]
 
     def test_flip_with_retracted_finding_only_still_warns(self):
-        """Reviewer flips, removes a finding but adds none → still warns
+        """Reviewer flips, removes a finding but adds none -> still warns
         (acknowledged false positive in docstring)."""
         ind = make_verdict(Severity.MAJOR, satisfied=False)
         ind.findings = [self._finding("a"), self._finding("b")]
@@ -181,175 +171,13 @@ class TestConformity:
         assert "#1" in warnings[0]
 
 
-class TestFullDebate:
-    def test_two_reviewers_two_rounds_complete_result(self):
-        mock = MockLLM(
-            responses={
-                # phase markers (from prompts/)
-                "审查框架": VERDICT_JSON_UNSATISFIED,  # Phase 1
-                "辩论阶段": "我认为该需求缺少量化指标,不同意...",  # Phase 2
-                "辩论已结束": VERDICT_JSON_UNSATISFIED,  # Phase 3
-            }
-        )
-        orch = _orchestrator(
-            mock,
-            make_config("reviewer-a"),
-            make_config("reviewer-b"),
-            debate_rounds=2,
-        )
-        result = orch.run("some content", ["reviewer-a", "reviewer-b"])
-
-        assert len(result.individual_verdicts) == 2
-        assert len(result.debate_rounds) == 2
-        assert all(len(r) == 2 for r in result.debate_rounds)
-        assert len(result.final_verdicts) == 2
-        assert result.final_verdict.severity == Severity.CRITICAL
-        assert result.stability_degraded is False
-        # call count: 2 (P1) + 2*2 (P2) + 2 (P3) = 8
-        assert mock.call_count == 8
-
-    def test_single_reviewer_fast_check_skips_phase3(self):
-        mock = MockLLM(
-            responses={
-                "审查框架": VERDICT_JSON_UNSATISFIED,
-                "辩论阶段": "should not be called",
-                "辩论已结束": "should not be called",
-            }
-        )
-        orch = _orchestrator(
-            mock, make_config("solo"), debate_rounds=2
-        )
-        result = orch.run("content", ["solo"])
-
-        assert result.debate_rounds == []  # Phase 2 skipped (B-3)
-        assert result.final_verdicts == result.individual_verdicts  # Phase 3 skipped
-        assert result.stability_degraded is True  # honest degradation marker
-        assert mock.call_count == 1  # exactly one LLM call (Phase 1 only)
-
-    def test_debate_rounds_zero_skips_phase2(self):
-        mock = MockLLM(
-            responses={
-                "审查框架": VERDICT_JSON_UNSATISFIED,
-                "辩论已结束": VERDICT_JSON_UNSATISFIED,
-            }
-        )
-        orch = _orchestrator(
-            mock, make_config("r1"), make_config("r2"), debate_rounds=0
-        )
-        result = orch.run("content", ["r1", "r2"])
-        assert result.debate_rounds == []
-        # P1 (2) + P3 (2) = 4 calls
-        assert mock.call_count == 4
-
-    def test_reviewer_failure_degrades_not_crashes(self):
-        mock = MockLLM(
-            responses={"审查框架": VERDICT_JSON_UNSATISFIED},
-            raise_on={"reviewer-b": RuntimeError("API exploded")},
-        )
-        orch = _orchestrator(
-            mock, make_config("reviewer-a"), make_config("reviewer-b")
-        )
-        result = orch.run("content", ["reviewer-a", "reviewer-b"])
-        assert len(result.individual_verdicts) == 2
-        degraded = result.individual_verdicts[1]
-        assert degraded.confidence == 0.0
-        assert degraded.severity == Severity.MAJOR
-        assert "REVIEWER FAILED" in degraded.reasoning
-        assert result.final_verdict is not None
-
-    def test_phase1_parallel_timing(self):
-        # N reviewers ≈ max(single latency), not sum (M-8)
-        mock = MockLLM(
-            responses={"审查框架": VERDICT_JSON_UNSATISFIED}, delay=0.2
-        )
-        orch = _orchestrator(
-            mock,
-            make_config("r1"),
-            make_config("r2"),
-            make_config("r3"),
-            make_config("r4"),
-            debate_rounds=0,
-        )
-        # replace phase 3 with a no-op by asserting on a full run's wall time:
-        # P1 (parallel, ~0.2s) + P3 (parallel, ~0.2s) ≈ 0.4s; serial would be 1.6s
-        start = time.monotonic()
-        orch.run("content", ["r1", "r2", "r3", "r4"])
-        elapsed = time.monotonic() - start
-        assert elapsed < 0.75, f"parallel execution too slow: {elapsed:.2f}s"
-
-    def test_budget_shortcircuit_after_phase1(self):
-        mock = MockLLM(
-            responses={
-                "审查框架": VERDICT_JSON_UNSATISFIED,
-                "辩论阶段": "nope",
-                "辩论已结束": "nope",
-            },
-            cost_per_call=0.3,
-        )
-        # budget 0.5: after Phase 1 (2 calls × 0.3 = 0.6) budget is exceeded
-        orch = _orchestrator(
-            mock,
-            make_config("r1"),
-            make_config("r2"),
-            debate_rounds=2,
-            max_budget_usd=0.5,
-        )
-        result = orch.run("content", ["r1", "r2"])
-        assert result.debate_rounds == []
-        assert result.final_verdicts == result.individual_verdicts
-        assert mock.call_count == 2  # only Phase 1 ran
-
-    def test_budget_stops_mid_debate(self):
-        mock = MockLLM(
-            responses={
-                "审查框架": VERDICT_JSON_UNSATISFIED,
-                "辩论阶段": "argument",
-                "辩论已结束": VERDICT_JSON_UNSATISFIED,
-            },
-            cost_per_call=0.2,
-        )
-        # budget 0.5: P1 (2×0.2=0.4) ok; round 1 (2×0.2 → 0.8) exceeds;
-        # round 1 completes (check happens BEFORE each round), then break
-        orch = _orchestrator(
-            mock,
-            make_config("r1"),
-            make_config("r2"),
-            debate_rounds=3,
-            max_budget_usd=0.5,
-        )
-        result = orch.run("content", ["r1", "r2"])
-        assert len(result.debate_rounds) == 1  # round 1 ran, rounds 2-3 stopped
-        # P1 (2) + round1 (2) + P3 (2) = 6
-        assert mock.call_count == 6
-
-    def test_majority_vote_inside_independent_review(self):
-        mock = MockLLM(
-            responses={
-                "审查框架": [
-                    VERDICT_JSON_UNSATISFIED,
-                    VERDICT_JSON_SATISFIED,
-                    VERDICT_JSON_UNSATISFIED,
-                ]
-            }
-        )
-        orch = _orchestrator(
-            mock, make_config("voter", majority_vote=3), debate_rounds=0
-        )
-        result = orch.run("content", ["voter"])
-        v = result.final_verdict
-        assert v.satisfied is False  # 2/3 unsatisfied
-        assert v.confidence == round(2 / 3, 4)
-        assert mock.call_count == 3
-
-
 class TestPromptBuilders:
     """Blind-final prompts must carry the JSON output protocol.
 
     Regression (found by the agent-mode e2e on real host reviewers): in
     agent mode the reviewer Agent sees ONLY the task prompt — without the
     protocol it answers in prose and the verdict parse chain degrades to a
-    failed verdict (confidence 0.0). The litellm path masked this via
-    ``complete_json`` schema injection at the LLM layer.
+    failed verdict (confidence 0.0).
     """
 
     def test_blind_final_user_prompt_carries_json_protocol(self):
@@ -409,7 +237,7 @@ class TestProvenanceTagging:
         assert any("[?未验证]" in w for w in warnings)
 
     def test_conformity_no_unverified_no_provenance_warning(self):
-        """A reviewer whose reasoning has no [?未验证] → no provenance warning."""
+        """A reviewer whose reasoning has no [?未验证] -> no provenance warning."""
         ind = make_verdict(Severity.MAJOR, satisfied=False)
         fin = make_verdict(Severity.PASS, satisfied=True)
         fin.reasoning = "基于确凿证据调整了判断"

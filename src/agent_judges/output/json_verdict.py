@@ -26,7 +26,6 @@ Design rules (FR-9 revision):
 import json
 
 from ..debate import DebateResult
-from ..llm.broker import LLMBroker
 from ..router import RouteDecision
 from ..types import Finding, Verdict
 
@@ -82,7 +81,6 @@ def render_json(
     result: DebateResult,
     confidence_threshold: float,
     meta_result: DebateResult | None = None,
-    broker: LLMBroker | None = None,
     route: RouteDecision | None = None,
 ) -> str:
     """Render the machine-readable JSON verdict (FR-9).
@@ -111,10 +109,5 @@ def render_json(
             "verdict": _verdict_summary(mv),
             "consensus_score": meta_result.consensus_score,
             "stability_score": meta_result.stability_score,
-        }
-    if broker is not None:
-        payload["cost"] = {
-            "total_tokens": broker.get_total_tokens(),
-            "total_cost_usd": round(broker.get_total_cost(), 6),
         }
     return json.dumps(payload, ensure_ascii=False, indent=2)
