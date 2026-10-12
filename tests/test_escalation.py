@@ -1,9 +1,9 @@
-"""EscalationRouter tests (plan 8-8) + 3-tier action layer (落地项 4)."""
+﻿"""EscalationRouter tests (plan 8-8) + 3-tier action layer (落地项 4)."""
 
 from __future__ import annotations
 
-from adversarial_judge.escalation import EscalationRouter
-from adversarial_judge.types import Finding, Severity
+from agent_judges.escalation import EscalationRouter
+from agent_judges.types import Finding, Severity
 
 from fixtures.helpers import make_finding, make_verdict
 
@@ -126,18 +126,18 @@ class TestRecommendThreshold:
     """落地项 4: threshold recommendation from calibration data."""
 
     def test_empty_pairs_returns_default(self):
-        from adversarial_judge.evaluation import recommend_threshold
+        from agent_judges.evaluation import recommend_threshold
 
         assert recommend_threshold([]) == 0.8
 
     def test_all_correct_returns_default(self):
-        from adversarial_judge.evaluation import recommend_threshold
+        from agent_judges.evaluation import recommend_threshold
 
         pairs = [(1, 0.9), (1, 0.8), (1, 0.7)]
         assert recommend_threshold(pairs) == 0.8
 
     def test_perfect_separation(self):
-        from adversarial_judge.evaluation import recommend_threshold
+        from agent_judges.evaluation import recommend_threshold
 
         # correct verdicts have confidence 0.9-1.0, incorrect have 0.3-0.5
         pairs = [

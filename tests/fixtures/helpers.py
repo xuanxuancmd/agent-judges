@@ -1,9 +1,9 @@
-"""Test helpers: in-memory registry/config/verdict builders + canned responses."""
+﻿"""Test helpers: in-memory registry/config/verdict builders + canned responses."""
 
 from __future__ import annotations
 
-from adversarial_judge.reviewer import ChecklistItem, ReviewerConfig, ReviewerRegistry
-from adversarial_judge.types import Finding, Severity, Verdict
+from agent_judges.reviewer import ChecklistItem, ReviewerConfig, ReviewerRegistry
+from agent_judges.types import Finding, Severity, Verdict
 
 __all__ = [
     "make_registry",

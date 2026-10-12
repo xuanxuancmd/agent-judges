@@ -1,4 +1,4 @@
-# agent-judges
+﻿# agent-judges
 
 多 agent 辩论式 AI 产出审计系统。对 AI 生成的需求文档、规格、设计、代码、测试计划、检视报告等产出物进行对抗审查——N 个 reviewer 独立评审 → 对抗辩论 → 盲评终判 → 裁决合成，置信度低于阈值时自动标记人工升级。
 
@@ -265,7 +265,7 @@ scenes: [document, code]     # 跨场景
 
 ```bash
 pytest tests/ -m "not integration" -v    # 单元测试(mock LLM,零 token)
-mypy src/adversarial_judge               # 类型检查
+mypy src/agent_judges               # 类型检查
 pytest tests/test_e2e.py -v              # 端到端(固定应答驱动,零 token)
 ```
 

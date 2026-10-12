@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for adversarial_judge tests."""
+﻿"""Shared pytest fixtures for agent_judges tests."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_judge.reviewer import ReviewerRegistry
+from agent_judges.reviewer import ReviewerRegistry
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REVIEWERS_DIR = REPO_ROOT / "reviewers"

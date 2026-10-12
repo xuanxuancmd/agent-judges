@@ -1,7 +1,7 @@
-"""``agent-judges install`` — install judge-manager + anonymous reviewer agent (FR-10).
+﻿"""``agent-judges install`` — install judge-manager + anonymous reviewer agent (FR-10).
 
 Artifacts are **compiled products**: the in-package templates
-(``adversarial_judge/integrations/``) are the single source of truth; re-run
+(``agent_judges/integrations/``) are the single source of truth; re-run
 install after editing templates.
 
 Per platform — everything is namespaced under a ``judges/`` subdirectory so the
@@ -124,6 +124,5 @@ def install(
         typer.echo(f"installed: {dest}")
 
     typer.echo(
-        f"\n完成: judge-manager + reviewer Agent → {target}\n"
-        f"(编译产物;修改 integrations/{resolved}/agent/ 模板后重新 install 生效)"
+        f"\n完成: judge-manager + reviewer Agent → {target}"
     )

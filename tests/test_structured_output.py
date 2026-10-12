@@ -1,4 +1,4 @@
-"""Structured-output degradation chain tests (B-5) + llm_verdict wiring."""
+﻿"""Structured-output degradation chain tests (B-5) + llm_verdict wiring."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import json
 
 from pydantic import BaseModel
 
-from adversarial_judge.judge import llm_verdict
-from adversarial_judge.llm.structured_output import (
+from agent_judges.judge import llm_verdict
+from agent_judges.llm.structured_output import (
     StructuredOutputParseError,
     force_structured_output,
 )
-from adversarial_judge.types import Severity, Verdict
+from agent_judges.types import Severity, Verdict
 
 from fixtures.helpers import VERDICT_JSON_SATISFIED, make_config
 from fixtures.mock_llm import MockLLM
@@ -134,7 +134,7 @@ class TestLlmVerdictWiring:
     def test_majority_vote_path_uses_structured_chain(self):
         # run_majority_vote → llm_verdict → complete_json: strict parse of
         # canned ```json responses succeeds without tag fallback
-        from adversarial_judge.judge import run_majority_vote
+        from agent_judges.judge import run_majority_vote
 
         mock = MockLLM(responses={"voter": VERDICT_JSON_SATISFIED})
         reviewer = make_config(name="voter", majority_vote=3)

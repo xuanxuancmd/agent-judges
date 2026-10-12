@@ -1,11 +1,11 @@
-"""MetaReviewer tests: calibration formula + multi-reviewer adversarial
+﻿"""MetaReviewer tests: calibration formula + multi-reviewer adversarial
 setup (plan 8-6, B-3/B-4)."""
 
 from __future__ import annotations
 
-from adversarial_judge.debate import DebateOrchestrator
-from adversarial_judge.meta_review import MetaReviewer
-from adversarial_judge.types import Severity
+from agent_judges.debate import DebateOrchestrator
+from agent_judges.meta_review import MetaReviewer
+from agent_judges.types import Severity
 
 from fixtures.helpers import (
     VERDICT_JSON_UNSATISFIED,

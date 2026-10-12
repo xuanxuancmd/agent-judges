@@ -1,4 +1,4 @@
-"""adversarial_judge: 对抗式多 Agent 审查系统。
+﻿"""agent_judges: 对抗式多 Agent 审查系统。
 
 受 Agent-as-a-Judge (ICML 2025) 启发的重写:
 - 纯 LLM 驱动的审查范式(无工具执行层)

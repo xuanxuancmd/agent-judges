@@ -1,11 +1,11 @@
-"""Skill system tests: SKILL.md parsing, registry, injection, ad-hoc reviewer."""
+﻿"""Skill system tests: SKILL.md parsing, registry, injection, ad-hoc reviewer."""
 
 from __future__ import annotations
 
 import pytest
 
-from adversarial_judge.reviewer import ReviewerConfig, ReviewerRegistry
-from adversarial_judge.skill import SkillConfig, SkillFileError, SkillRegistry
+from agent_judges.reviewer import ReviewerConfig, ReviewerRegistry
+from agent_judges.skill import SkillConfig, SkillFileError, SkillRegistry
 
 from fixtures.helpers import make_config
 

@@ -1,4 +1,4 @@
-"""Host-agent LLM credential resolution (Claude Code / OpenCode passthrough).
+﻿"""Host-agent LLM credential resolution (Claude Code / OpenCode passthrough).
 
 ``agent-judges`` (litellm direct mode) is designed to be invoked from coding-agent sessions (design.md 1.5).
 It does not require its own API keys: LLM credentials are inherited from the
@@ -14,7 +14,7 @@ calling session's environment, resolved per provider:
   (openai) — e.g. pointing at an ``opencode-llm-proxy`` instance, since
   OpenCode does not export its ``auth.json`` credentials to subprocesses.
 
-Resolution order in :class:`~adversarial_judge.llm.broker.LLMBroker`:
+Resolution order in :class:`~agent_judges.llm.broker.LLMBroker`:
 explicit constructor args > these env vars > litellm's internal fallback.
 """
 

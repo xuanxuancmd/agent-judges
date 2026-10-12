@@ -1,4 +1,4 @@
-"""Integration tests — REAL LLM calls (plan 8-10).
+﻿"""Integration tests — REAL LLM calls (plan 8-10).
 
 Credentials are inherited from the environment (typically the Claude Code /
 OpenCode session that runs the test command); any one of the supported
@@ -18,7 +18,7 @@ import os
 import pytest
 from typer.testing import CliRunner
 
-from adversarial_judge.cli import app
+from agent_judges.cli import app
 from conftest import REVIEWERS_DIR
 
 _HOST_LLM_ENV = (

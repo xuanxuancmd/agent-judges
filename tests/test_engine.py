@@ -1,4 +1,4 @@
-"""Engine (prepare/resume state machine) tests — zero LLM calls.
+﻿"""Engine (prepare/resume state machine) tests — zero LLM calls.
 
 Results are injected as raw agent-output texts, exactly what the
 judge-manager driver would write into ``results/<id>.md``."""
@@ -10,7 +10,7 @@ from fixtures.helpers import (
     VERDICT_JSON_UNSATISFIED,
     make_config,
 )
-from adversarial_judge.engine import (
+from agent_judges.engine import (
     META_REVIEWERS,
     advance,
     build_result,
@@ -18,14 +18,14 @@ from adversarial_judge.engine import (
     prepare_fixed,
     prepare_progressive,
 )
-from adversarial_judge.run_state import (
+from agent_judges.run_state import (
     RunState,
     Stage,
     load_state,
     save_state,
 )
-from adversarial_judge.types import Severity
-from adversarial_judge.utils.truncate import count_tokens
+from agent_judges.types import Severity
+from agent_judges.utils.truncate import count_tokens
 
 PANEL = ("spec-reviewer", "design-reviewer", "test-plan-reviewer")
 

@@ -1,10 +1,10 @@
-"""Prepare/resume engine: the deterministic state-machine core (FR-11).
+﻿"""Prepare/resume engine: the deterministic state-machine core (FR-11).
 
 Two entry flavours share one ``advance`` stage machine:
 
 - **progressive (gated)** — zero flow params: deterministic start rule
   (token count → sentinel or full panel), then the two pure-rule gates
-  from :mod:`adversarial_judge.progressive` decide early stop / escalation
+  from :mod:`agent_judges.progressive` decide early stop / escalation
 - **fixed** — explicit ``-r`` / ``--profile`` params: full panel from the
   start, fixed debate rounds and review depth, gates disabled
 

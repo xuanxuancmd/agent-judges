@@ -1,6 +1,6 @@
 ﻿"""CLI tests via typer's CliRunner with a mocked LLMBroker (plan 8-7).
 
-The broker is monkeypatched at ``adversarial_judge.cli.review.LLMBroker`` so no test
+The broker is monkeypatched at ``agent_judges.cli.review.LLMBroker`` so no test
 ever hits a real API.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from adversarial_judge.cli import app
+from agent_judges.cli import app
 
 from conftest import REVIEWERS_DIR, SKILLS_DIR
 from fixtures.helpers import VERDICT_JSON_SATISFIED, VERDICT_JSON_UNSATISFIED
@@ -29,7 +29,7 @@ def install_mock_broker(monkeypatch):
         def factory(default_model="mock", max_budget_usd=None, **kwargs):
             return MockLLMBroker(mock_llm, max_budget_usd=max_budget_usd)
 
-        monkeypatch.setattr("adversarial_judge.cli.review.LLMBroker", factory)
+        monkeypatch.setattr("agent_judges.cli.review.LLMBroker", factory)
 
     return _install
 
@@ -650,7 +650,7 @@ class TestBaseUrl:
                 MockLLM(responses=_base_responses()), max_budget_usd=max_budget_usd
             )
 
-        monkeypatch.setattr("adversarial_judge.cli.review.LLMBroker", factory)
+        monkeypatch.setattr("agent_judges.cli.review.LLMBroker", factory)
         result = runner.invoke(
             app,
             [

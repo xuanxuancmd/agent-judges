@@ -1,11 +1,11 @@
-"""ReviewerConfig / ReviewerRegistry tests (plan 8-2)."""
+﻿"""ReviewerConfig / ReviewerRegistry tests (plan 8-2)."""
 
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
 
-from adversarial_judge.reviewer import ReviewerConfig, ReviewerRegistry
+from agent_judges.reviewer import ReviewerConfig, ReviewerRegistry
 
 
 def test_stock_yaml_loads_all_templates(stock_registry):

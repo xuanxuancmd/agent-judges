@@ -1,4 +1,4 @@
-"""Run-state model and run-directory IO for the prepare/resume engine (FR-11).
+﻿"""Run-state model and run-directory IO for the prepare/resume engine (FR-11).
 
 A review run is a persistent state machine whose artifacts are split across
 two roots for clean separation of runtime logs and review evidence:
@@ -16,7 +16,7 @@ The input snapshot is **not** written — the original file path is recorded in
 ``RunState.filename``, and the content is embedded verbatim in every task
 prompt, making a frozen copy redundant.
 
-The engine (:mod:`adversarial_judge.engine`) transitions the state with a
+The engine (:mod:`agent_judges.engine`) transitions the state with a
 pure ``advance(state, results)`` function; the CLI (agent mode) and the
 driver agent (judge-manager) only persist/load and shuttle files.
 

@@ -1,4 +1,4 @@
-# 对抗审查系统白盒设计方案 (Design)
+﻿# 对抗审查系统白盒设计方案 (Design)
 
 ---
 
@@ -134,9 +134,9 @@ AaaJ 的短板(无辩论、绑 benchmark、无多模型、无升级路由)可通
 
 ### 4.1 目录结构
 
-src/adversarial_judge/ 的实际 v2 结构(37 个 Python 文件):
+src/agent_judges/ 的实际 v2 结构(37 个 Python 文件):
 
-    src/adversarial_judge/
+    src/agent_judges/
     ├── __init__.py
     ├── types.py                      Severity 枚举, Verdict / Finding Pydantic schema
     ├── reviewer.py                   MD frontmatter + persona 加载, ReviewerRegistry
@@ -391,7 +391,7 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 | 文件 | 职责 |
 |---|---|
 | `cli/__init__.py` | typer app 注册, 子命令挂载 |
-| `cli/__main__.py` | python -m adversarial_judge 入口 |
+| `cli/__main__.py` | python -m agent_judges 入口 |
 | `cli/review.py` | review 子命令(litellm 直连模式: --content / --file / stdin) |
 | `cli/review_flow.py` | review 流程编排: 渐进式 vs fixed, 调 engine.prepare / advance |
 | `cli/install.py` | install 子命令: 编译 reviewer 源 + judge-manager 模板 → 宿主 Agent 定义 |
@@ -449,7 +449,7 @@ L2 人工覆盖: `--profile fast / standard / thorough` 半决策, 或细粒度�
 | B-3 | 元审查至少 2 个 meta-reviewer, 单 reviewer 跳辩论 | 单 reviewer 无法形成对抗 |
 | B-4 | 校准用显式公式, 非覆盖 confidence | 保留原始置信度信息, 可审计 |
 | B-5 | 结构化输出 4 级降级链 | litellm 对各模型的结构化输出支持不一致 |
-| M-1 | 包名 agent_as_a_judge → adversarial_judge | 与 CLI 命名一致, 去 fork 痕迹 |
+| M-1 | 包名 agent_as_a_judge → agent_judges | 与 CLI 命名一致, 去 fork 痕迹 |
 | M-2 | 删除证据收集模块 + benchmark | 通用审查不需要 workspace 绑定 |
 | M-3 | 新 LLM 类保留 Cost + retry | 不丢失 AaaJ 已有能力 |
 | M-4 | reviewer.model 改为可选 | 宿主默认 + per-reviewer 覆盖 |

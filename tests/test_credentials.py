@@ -1,9 +1,9 @@
-"""Host-agent credential resolution tests (Claude Code / OpenCode passthrough)."""
+﻿"""Host-agent credential resolution tests (Claude Code / OpenCode passthrough)."""
 
 from __future__ import annotations
 
-from adversarial_judge.llm.broker import LLMBroker
-from adversarial_judge.llm.credentials import (
+from agent_judges.llm.broker import LLMBroker
+from agent_judges.llm.credentials import (
     env_api_key,
     env_base_url,
     is_host_provider,

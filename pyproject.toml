@@ -1,11 +1,11 @@
 [tool.poetry]
-name = "adversarial-judge"
+name = "agent-judges"
 version = "0.1.0"
 description = "Adversarial multi-agent review system for AI-generated artifacts"
 authors = ["Mingchen Zhuge <mingchen.zhuge@kaust.edu.sa>", "adversarial-judge contributors"]
 license = "MIT"
 readme = "README.md"
-packages = [{ include = "adversarial_judge", from = "src" }]
+packages = [{ include = "agent_judges", from = "src" }]
 
 [tool.poetry.dependencies]
 # litellm requires python >=3.10,<3.15 — keep the project range inside it
@@ -24,7 +24,7 @@ pytest = ">=8.3.3"
 pytest-cov = ">=5.0.0"
 
 [tool.poetry.scripts]
-agent-judges = "adversarial_judge.cli:app"
+agent-judges = "agent_judges.cli:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

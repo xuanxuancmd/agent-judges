@@ -1,4 +1,4 @@
-"""Mock LLM fixtures — unit tests never hit real APIs (G-6).
+﻿"""Mock LLM fixtures — unit tests never hit real APIs (G-6).
 
 ``MockLLM`` routes canned responses by substring matching against the
 system/user prompt (e.g. a reviewer persona keyword, or a phase marker like
@@ -18,10 +18,10 @@ import time
 
 from pydantic import ValidationError
 
-from adversarial_judge.llm.broker import LLMBroker
-from adversarial_judge.llm.cost import Cost
-from adversarial_judge.llm.provider import LLM
-from adversarial_judge.llm.structured_output import (
+from agent_judges.llm.broker import LLMBroker
+from agent_judges.llm.cost import Cost
+from agent_judges.llm.provider import LLM
+from agent_judges.llm.structured_output import (
     StructuredOutputParseError,
     _parse_json_response,
 )

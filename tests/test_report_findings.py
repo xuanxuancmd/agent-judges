@@ -1,4 +1,4 @@
-"""Report.md findings rendering tests — empty suggestion handling + ordering.
+﻿"""Report.md findings rendering tests — empty suggestion handling + ordering.
 
 Covers:
 - suggestion 为空 → "需人工排查"
@@ -16,10 +16,10 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from adversarial_judge.cli import app
-from adversarial_judge.debate import DebateResult
-from adversarial_judge.output import render_json, render_markdown
-from adversarial_judge.types import Finding, Severity, Verdict
+from agent_judges.cli import app
+from agent_judges.debate import DebateResult
+from agent_judges.output import render_json, render_markdown
+from agent_judges.types import Finding, Severity, Verdict
 
 from fixtures.helpers import make_finding, make_verdict
 

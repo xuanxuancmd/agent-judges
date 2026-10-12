@@ -1,6 +1,6 @@
-"""E2E driver — a faithful automation of the judge-manager protocol.
+﻿"""E2E driver — a faithful automation of the judge-manager protocol.
 
-Mirrors ``src/adversarial_judge/integrations/<host>/agent/judge-manager.md``:
+Mirrors ``src/agent_judges/integrations/<host>/agent/judge-manager.md``:
 
     prepare (``review --file ... --run-dir RUN``) → for each manifest task:
     read ``tasks/<id>.md`` verbatim → answer (mock scenario or real LLM) →
@@ -24,8 +24,8 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from adversarial_judge.cli import app
-from adversarial_judge.utils.truncate import truncate_string
+from agent_judges.cli import app
+from agent_judges.utils.truncate import truncate_string
 
 __all__ = [
     "PROJECTS_DIR",
@@ -150,7 +150,7 @@ class LitellmAnswerer:
         max_calls: int = 120,
         max_prompt_tokens: int = 50000,
     ):
-        from adversarial_judge.llm.provider import LLM
+        from agent_judges.llm.provider import LLM
 
         self._llm = LLM(model=model, base_url=base_url)
         self._max_calls = max_calls

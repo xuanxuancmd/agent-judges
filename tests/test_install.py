@@ -1,4 +1,4 @@
-"""``agent-judges install`` tests — template-copy checks per platform."""
+﻿"""``agent-judges install`` tests — template-copy checks per platform."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from adversarial_judge.cli import app
+from agent_judges.cli import app
 
 runner = CliRunner()
 

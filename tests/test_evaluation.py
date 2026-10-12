@@ -1,9 +1,9 @@
-"""Evaluation utilities tests: AUROC (fixed tie-aware), infer_confidence
+﻿"""Evaluation utilities tests: AUROC (fixed tie-aware), infer_confidence
 degradation chain, build_pairs pipeline (plan 8-9)."""
 
 from __future__ import annotations
 
-from adversarial_judge.evaluation import (
+from agent_judges.evaluation import (
     accuracy,
     auroc,
     build_pairs,

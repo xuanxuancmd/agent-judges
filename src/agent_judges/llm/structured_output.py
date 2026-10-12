@@ -1,4 +1,4 @@
-"""Forced structured output: litellm tool-use first + multi-level degradation.
+﻿"""Forced structured output: litellm tool-use first + multi-level degradation.
 
 Degradation chain (B-5):
 1. litellm tool-use (Anthropic natively supports tool_use; manually-built
@@ -8,7 +8,7 @@ Degradation chain (B-5):
    (```json fenced block → bare ``{...}`` object)
 
 The final ``<SATISFIED>/<UNSATISFIED>`` label fallback lives in
-``adversarial_judge.judge.parse_verdict`` (AaaJ-preserved) and is used by the
+``agent_judges.judge.parse_verdict`` (AaaJ-preserved) and is used by the
 debate pipeline instead of this module.
 """
 

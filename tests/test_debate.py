@@ -1,18 +1,18 @@
-"""DebateOrchestrator tests: synthesis, consensus, stability, parallel
+﻿"""DebateOrchestrator tests: synthesis, consensus, stability, parallel
 degradation, fast-check mode, budget short-circuit (plan 8-4)."""
 
 from __future__ import annotations
 
 import time
 
-from adversarial_judge.consensus import (
+from agent_judges.consensus import (
     compute_consensus,
     compute_stability,
     detect_conformity,
     synthesize_verdict,
 )
-from adversarial_judge.debate import DebateOrchestrator
-from adversarial_judge.types import Finding, Severity
+from agent_judges.debate import DebateOrchestrator
+from agent_judges.types import Finding, Severity
 
 from fixtures.helpers import (
     VERDICT_JSON_SATISFIED,
@@ -353,7 +353,7 @@ class TestPromptBuilders:
     """
 
     def test_blind_final_user_prompt_carries_json_protocol(self):
-        from adversarial_judge.prompts.debate import build_blind_final_user_prompt
+        from agent_judges.prompts.debate import build_blind_final_user_prompt
 
         prompt = build_blind_final_user_prompt("内容 X", "立场 Y")
         assert "```json" in prompt
@@ -368,8 +368,8 @@ class TestPromptBuilders:
         reviewers answer findings severity with high/medium/low, which the
         lenient parser silently downgrades to minor — understating results.
         """
-        from adversarial_judge.prompts.debate import build_blind_final_user_prompt
-        from adversarial_judge.prompts.judge_user import build_judge_prompt
+        from agent_judges.prompts.debate import build_blind_final_user_prompt
+        from agent_judges.prompts.judge_user import build_judge_prompt
 
         checklist = [type("C", (), {"criteria": "c1"})()]
         phase1 = build_judge_prompt("内容", checklist)
@@ -385,7 +385,7 @@ class TestProvenanceTagging:
     """落地项 1: Phase 2 debate prompts carry tri-state provenance tags."""
 
     def test_debate_system_prompt_contains_provenance_instructions(self):
-        from adversarial_judge.prompts.debate import build_debate_system_prompt
+        from agent_judges.prompts.debate import build_debate_system_prompt
 
         prompt = build_debate_system_prompt("你是测试审查者。")
         assert "[✓已确认]" in prompt
@@ -395,7 +395,7 @@ class TestProvenanceTagging:
         assert "[?未验证]的主张不得作为你调整自己severity或confidence的依据" in prompt
 
     def test_debate_user_prompt_labels_content_as_verification_source(self):
-        from adversarial_judge.prompts.debate import build_debate_user_prompt
+        from agent_judges.prompts.debate import build_debate_user_prompt
 
         prompt = build_debate_user_prompt("被审查内容", "他人观点")
         assert "被审查内容(请据此验证他人主张)" in prompt
@@ -421,13 +421,13 @@ class TestAgreementIntensity:
     """落地项 3: auto-inferred skepticism from Phase-1 signals."""
 
     def test_infer_skepticism_critical_severity(self):
-        from adversarial_judge.consensus import infer_skepticism
+        from agent_judges.consensus import infer_skepticism
 
         verdicts = [make_verdict(Severity.CRITICAL, confidence=0.9, satisfied=False)]
         assert infer_skepticism(verdicts) == 0.9
 
     def test_infer_skepticism_low_consensus(self):
-        from adversarial_judge.consensus import infer_skepticism
+        from agent_judges.consensus import infer_skepticism
 
         verdicts = [
             make_verdict(Severity.PASS, confidence=0.9, satisfied=True),
@@ -436,7 +436,7 @@ class TestAgreementIntensity:
         assert infer_skepticism(verdicts) == 0.85
 
     def test_infer_skepticism_full_consensus_minor(self):
-        from adversarial_judge.consensus import infer_skepticism
+        from agent_judges.consensus import infer_skepticism
 
         verdicts = [
             make_verdict(Severity.MINOR, confidence=0.9, satisfied=True),
@@ -445,7 +445,7 @@ class TestAgreementIntensity:
         assert infer_skepticism(verdicts) == 0.4
 
     def test_infer_skepticism_default_moderate(self):
-        from adversarial_judge.consensus import infer_skepticism
+        from agent_judges.consensus import infer_skepticism
 
         verdicts = [
             make_verdict(Severity.MAJOR, confidence=0.8, satisfied=False),
@@ -454,24 +454,24 @@ class TestAgreementIntensity:
         assert infer_skepticism(verdicts) == 0.7
 
     def test_infer_skepticism_empty_returns_default(self):
-        from adversarial_judge.consensus import infer_skepticism
+        from agent_judges.consensus import infer_skepticism
 
         assert infer_skepticism([]) == 0.7
 
     def test_debate_prompt_high_skepticism(self):
-        from adversarial_judge.prompts.debate import build_debate_system_prompt
+        from agent_judges.prompts.debate import build_debate_system_prompt
 
         prompt = build_debate_system_prompt("你是审查者。", skepticism=0.9)
         assert "保持高度怀疑" in prompt
 
     def test_debate_prompt_low_skepticism(self):
-        from adversarial_judge.prompts.debate import build_debate_system_prompt
+        from agent_judges.prompts.debate import build_debate_system_prompt
 
         prompt = build_debate_system_prompt("你是审查者。", skepticism=0.3)
         assert "优先寻找与其他审查者的共识点" in prompt
 
     def test_debate_prompt_default_moderate(self):
-        from adversarial_judge.prompts.debate import build_debate_system_prompt
+        from agent_judges.prompts.debate import build_debate_system_prompt
 
         prompt = build_debate_system_prompt("你是审查者。")
         assert "对其他审查者不同意的发现进行反驳" in prompt
@@ -481,32 +481,32 @@ class TestReasoningStrategy:
     """落地项 2: reasoning strategy injection + diversity-aware panel."""
 
     def test_system_prompt_injects_strategy(self):
-        from adversarial_judge.prompts.judge_system import build_system_prompt
+        from agent_judges.prompts.judge_system import build_system_prompt
 
         prompt = build_system_prompt("你是审查者。", reasoning_strategy="inverse")
         assert "[推理策略 — inverse]" in prompt
         assert "假设它是必要的" in prompt
 
     def test_system_prompt_injects_transform_strategy(self):
-        from adversarial_judge.prompts.judge_system import build_system_prompt
+        from agent_judges.prompts.judge_system import build_system_prompt
 
         prompt = build_system_prompt("你是审查者。", reasoning_strategy="transform")
         assert "[推理策略 — transform]" in prompt
 
     def test_system_prompt_no_strategy_no_injection(self):
-        from adversarial_judge.prompts.judge_system import build_system_prompt
+        from agent_judges.prompts.judge_system import build_system_prompt
 
         prompt = build_system_prompt("你是审查者。")
         assert "[推理策略" not in prompt
 
     def test_system_prompt_unknown_strategy_no_injection(self):
-        from adversarial_judge.prompts.judge_system import build_system_prompt
+        from agent_judges.prompts.judge_system import build_system_prompt
 
         prompt = build_system_prompt("你是审查者。", reasoning_strategy="unknown")
         assert "[推理策略" not in prompt
 
     def test_deterministic_panel_prefers_diverse_strategies(self):
-        from adversarial_judge.router import deterministic_panel
+        from agent_judges.router import deterministic_panel
 
         available = ["a", "b", "c", "d"]
         strategies = {
@@ -522,7 +522,7 @@ class TestReasoningStrategy:
         assert len(panel_strategies) >= 2
 
     def test_deterministic_panel_no_strategies_fallback(self):
-        from adversarial_judge.router import deterministic_panel
+        from agent_judges.router import deterministic_panel
 
         panel = deterministic_panel(["a", "b", "c"], 2)
         assert len(panel) == 2

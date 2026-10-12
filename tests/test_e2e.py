@@ -1,4 +1,4 @@
-"""E2E tests — real requirement documents × the full review system.
+﻿"""E2E tests — real requirement documents × the full review system.
 
 Review targets are the two requirement doc sets under ``tests/project/``
 (each: ``spec.md`` + ``plan.md``):
@@ -27,8 +27,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from adversarial_judge.cli import app
-from adversarial_judge.run_state import run_dir_layout
+from agent_judges.cli import app
+from agent_judges.run_state import run_dir_layout
 from conftest import REVIEWERS_DIR, SKILLS_DIR
 from fixtures.e2e_driver import (
     PROJECTS_DIR,
@@ -228,7 +228,7 @@ class TestLitellmDirectPathE2E:
                 MockLLM(responses=responses), max_budget_usd=max_budget_usd
             )
 
-        monkeypatch.setattr("adversarial_judge.cli.review.LLMBroker", factory)
+        monkeypatch.setattr("agent_judges.cli.review.LLMBroker", factory)
         result = CliRunner().invoke(
             app,
             [

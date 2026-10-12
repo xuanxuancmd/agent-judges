@@ -1,4 +1,4 @@
-"""Tests for graphify evidence collection (active verification).
+﻿"""Tests for graphify evidence collection (active verification).
 
 These tests mock subprocess and shutil.which to verify:
 1. non-code scene → skip (returns None)
@@ -18,13 +18,13 @@ from unittest.mock import patch
 
 import pytest
 
-from adversarial_judge.evidence import (
+from agent_judges.evidence import (
     collect_graphify_evidence,
     enrich_context,
 )
-from adversarial_judge.engine import prepare_progressive, prepare_fixed
-from adversarial_judge.run_state import Stage
-from adversarial_judge.reviewer import ReviewerConfig, ChecklistItem
+from agent_judges.engine import prepare_progressive, prepare_fixed
+from agent_judges.run_state import Stage
+from agent_judges.reviewer import ReviewerConfig, ChecklistItem
 
 
 # ---------------------------------------------------------------------------
@@ -74,21 +74,21 @@ def _make_config(name="test-reviewer"):
 class TestCollectGraphifyEvidenceSkip:
     def test_non_code_scene_skips(self):
         # scene="document" → graphify not activated, returns None immediately
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"):
             result = collect_graphify_evidence(
                 CODE_CONTENT, "engine.py", scene="document"
             )
         assert result is None
 
     def test_graphify_not_on_path(self):
-        with patch("adversarial_judge.evidence.shutil.which", return_value=None):
+        with patch("agent_judges.evidence.shutil.which", return_value=None):
             result = collect_graphify_evidence(
                 CODE_CONTENT, "engine.py", scene="code"
             )
         assert result is None
 
     def test_graph_file_missing(self, tmp_path):
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"):
             result = collect_graphify_evidence(
                 CODE_CONTENT, "engine.py",
                 scene="code",
@@ -113,8 +113,8 @@ class TestCollectGraphifyEvidenceSuccess:
             "stderr": "",
         })()
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-             patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+             patch("agent_judges.evidence.subprocess.run", return_value=mock_result):
             result = collect_graphify_evidence(
                 CODE_CONTENT, "engine.py",
                 scene="code",
@@ -135,8 +135,8 @@ class TestCollectGraphifyEvidenceSuccess:
             "stderr": "error: something",
         })()
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-             patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+             patch("agent_judges.evidence.subprocess.run", return_value=mock_result):
             result = collect_graphify_evidence(
                 CODE_CONTENT, "engine.py",
                 scene="code",
@@ -150,8 +150,8 @@ class TestCollectGraphifyEvidenceSuccess:
         graph_file = tmp_path / "graph.json"
         graph_file.write_text("{}")
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-             patch("adversarial_judge.evidence.subprocess.run", side_effect=subprocess.TimeoutExpired("graphify", 15)):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+             patch("agent_judges.evidence.subprocess.run", side_effect=subprocess.TimeoutExpired("graphify", 15)):
             result = collect_graphify_evidence(
                 CODE_CONTENT, "engine.py",
                 scene="code",
@@ -170,8 +170,8 @@ class TestCollectGraphifyEvidenceSuccess:
             "stderr": "",
         })()
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-             patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+             patch("agent_judges.evidence.subprocess.run", return_value=mock_result):
             result = collect_graphify_evidence(
                 CODE_CONTENT, "engine.py",
                 scene="code",
@@ -191,8 +191,8 @@ class TestCollectGraphifyEvidenceSuccess:
                 "stdout": error_pattern,
                 "stderr": "",
             })()
-            with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-                 patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
+            with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+                 patch("agent_judges.evidence.subprocess.run", return_value=mock_result):
                 result = collect_graphify_evidence(
                     CODE_CONTENT, "engine.py",
                     scene="code",
@@ -208,14 +208,14 @@ class TestCollectGraphifyEvidenceSuccess:
 
 class TestEnrichContext:
     def test_no_evidence_returns_original_context(self):
-        with patch("adversarial_judge.evidence.shutil.which", return_value=None):
+        with patch("agent_judges.evidence.shutil.which", return_value=None):
             result = enrich_context(
                 CODE_CONTENT, "existing context", "engine.py", scene="code"
             )
         assert result == "existing context"
 
     def test_no_evidence_no_context_returns_none(self):
-        with patch("adversarial_judge.evidence.shutil.which", return_value=None):
+        with patch("agent_judges.evidence.shutil.which", return_value=None):
             result = enrich_context(CODE_CONTENT, None, "engine.py", scene="code")
         assert result is None
 
@@ -240,8 +240,8 @@ class TestEnrichContext:
             "stderr": "",
         })()
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-             patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+             patch("agent_judges.evidence.subprocess.run", return_value=mock_result):
             result = enrich_context(
                 CODE_CONTENT, "base context", "engine.py",
                 scene="code",
@@ -263,8 +263,8 @@ class TestEnrichContext:
             "stderr": "",
         })()
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-             patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+             patch("agent_judges.evidence.subprocess.run", return_value=mock_result):
             result = enrich_context(
                 CODE_CONTENT, None, "engine.py",
                 scene="code",
@@ -297,9 +297,9 @@ class TestEngineEvidenceInjection:
 
         configs = {"test-reviewer": _make_config()}
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-             patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result), \
-             patch("adversarial_judge.evidence.Path.cwd", return_value=tmp_path):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+             patch("agent_judges.evidence.subprocess.run", return_value=mock_result), \
+             patch("agent_judges.evidence.Path.cwd", return_value=tmp_path):
             state, tasks = prepare_progressive(
                 content=CODE_CONTENT,
                 context=None,
@@ -317,7 +317,7 @@ class TestEngineEvidenceInjection:
         """prepare_progressive should work normally when graphify is absent."""
         configs = {"test-reviewer": _make_config()}
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value=None):
+        with patch("agent_judges.evidence.shutil.which", return_value=None):
             state, tasks = prepare_progressive(
                 content=CODE_CONTENT,
                 context="original context",
@@ -334,7 +334,7 @@ class TestEngineEvidenceInjection:
         """prepare_progressive should not inject evidence for document scene."""
         configs = {"test-reviewer": _make_config()}
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"):
             state, tasks = prepare_progressive(
                 content=PROSE_CONTENT,
                 context="original context",
@@ -363,9 +363,9 @@ class TestEngineEvidenceInjection:
 
         configs = {"test-reviewer": _make_config()}
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"), \
-             patch("adversarial_judge.evidence.subprocess.run", return_value=mock_result), \
-             patch("adversarial_judge.evidence.Path.cwd", return_value=tmp_path):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"), \
+             patch("agent_judges.evidence.subprocess.run", return_value=mock_result), \
+             patch("agent_judges.evidence.Path.cwd", return_value=tmp_path):
             state, tasks = prepare_fixed(
                 content=CODE_CONTENT,
                 context=None,
@@ -384,7 +384,7 @@ class TestEngineEvidenceInjection:
         """prepare_fixed should not inject evidence for document scene."""
         configs = {"test-reviewer": _make_config()}
 
-        with patch("adversarial_judge.evidence.shutil.which", return_value="/usr/bin/graphify"):
+        with patch("agent_judges.evidence.shutil.which", return_value="/usr/bin/graphify"):
             state, tasks = prepare_fixed(
                 content=PROSE_CONTENT,
                 context="original context",

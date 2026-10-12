@@ -1,4 +1,4 @@
-# AGENTS.md — adversarial-judge (agent-judges)
+﻿# AGENTS.md — adversarial-judge (agent-judges)
 
 面向在本仓库工作的编码 agent（Claude Code / OpenCode 等）。**第 1 节是产品级需求约束，
 任何设计决策与代码改动不得违反**；其余为开发指南。
@@ -64,8 +64,8 @@
 
 ```
 入口层  judge-manager Agent(宿主内,机械执行驱动协议)               [integrations/]
-引擎层  agent-judges CLI: prepare/resume 状态机(门控/辩论/合成/升级)  [src/adversarial_judge/]
-LLM层   宿主实体 reviewer Agent(模型=宿主配置)                      [src/adversarial_judge/llm/]
+引擎层  agent-judges CLI: prepare/resume 状态机(门控/辩论/合成/升级)  [src/agent_judges/]
+LLM层   宿主实体 reviewer Agent(模型=宿主配置)                      [src/agent_judges/llm/]
         (litellm 直连为内部测试设施,见 5.1)
 ```
 
@@ -88,8 +88,8 @@ LLM层   宿主实体 reviewer Agent(模型=宿主配置)                      [
 ```bash
 python -m pytest tests/ -m "not integration" -q        # 单元测试（MockLLM，零 token）
 python -m pytest tests/test_integration.py -m integration -v   # 需真实凭证
-python -m mypy src/adversarial_judge                   # 类型检查（yaml stub 缺失为已知环境问题）
-python -m adversarial_judge.cli list-reviewers         # 列出内置视角模板
+python -m mypy src/agent_judges                   # 类型检查（yaml stub 缺失为已知环境问题）
+python -m agent_judges.cli list-reviewers         # 列出内置视角模板
 ```
 
 ## 4. 代码约定

@@ -1,11 +1,11 @@
-"""parse_verdict degradation + run_majority_vote tests (plan 8-3)."""
+﻿"""parse_verdict degradation + run_majority_vote tests (plan 8-3)."""
 
 from __future__ import annotations
 
 import pytest
 
-from adversarial_judge.judge import parse_verdict, run_majority_vote
-from adversarial_judge.types import Finding, Severity, Verdict
+from agent_judges.judge import parse_verdict, run_majority_vote
+from agent_judges.types import Finding, Severity, Verdict
 
 from fixtures.helpers import (
     VERDICT_JSON_SATISFIED,

@@ -1,22 +1,22 @@
-"""Progressive review tests: gates, decisions, resolve_flow, orchestration
+﻿"""Progressive review tests: gates, decisions, resolve_flow, orchestration
 (zero real LLM calls — MockLLM only)."""
 
 from __future__ import annotations
 
 import pytest
 
-from adversarial_judge.cli.review_flow import FlowError, FlowRequest, resolve_flow
-from adversarial_judge.consensus import failed_verdict
-from adversarial_judge.debate import DebateOrchestrator
-from adversarial_judge.progressive import (
+from agent_judges.cli.review_flow import FlowError, FlowRequest, resolve_flow
+from agent_judges.consensus import failed_verdict
+from agent_judges.debate import DebateOrchestrator
+from agent_judges.progressive import (
     LONG_CONTENT_TOKENS,
     ProgressiveDecision,
     escalation_tier,
     should_early_stop,
     start_panel_size,
 )
-from adversarial_judge.types import Severity
-from adversarial_judge.utils.truncate import count_tokens
+from agent_judges.types import Severity
+from agent_judges.utils.truncate import count_tokens
 
 from fixtures.helpers import (
     VERDICT_JSON_SATISFIED,

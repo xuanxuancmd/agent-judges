@@ -1,12 +1,12 @@
-"""truncate_string unit tests + debate token-fit guard (omission B-4)."""
+﻿"""truncate_string unit tests + debate token-fit guard (omission B-4)."""
 
 from __future__ import annotations
 
 import pytest
 
-from adversarial_judge.debate import DebateOrchestrator, fit_for_model
-from adversarial_judge.types import Severity
-from adversarial_judge.utils.truncate import truncate_string
+from agent_judges.debate import DebateOrchestrator, fit_for_model
+from agent_judges.types import Severity
+from agent_judges.utils.truncate import truncate_string
 
 from fixtures.helpers import VERDICT_JSON_UNSATISFIED, make_config, make_registry
 from fixtures.mock_llm import MockLLM, MockLLMBroker

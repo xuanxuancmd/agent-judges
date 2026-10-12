@@ -1,4 +1,4 @@
-# 对抗审查系统实施计划 (Plan)
+﻿# 对抗审查系统实施计划 (Plan)
 
 > **文档状态**: 已实施(2026-09-11 落地;遗留项见 §7 风险表末行)
 > **版本**: 2.0(宿主 Agent 化改造;取代 v0.1 初始构建计划——v0.1 已全部完成,存于 git 历史)
@@ -63,7 +63,7 @@ Phase 5: 测试收口 + 文档同步                        (~1-1.5 天)
 
 | 任务 | 文件 | 内容 |
 |---|---|---|
-| 1-1 | `pyproject.toml` | script:移除 `aj`,注册 `agent-judges = "adversarial_judge.cli:app"` |
+| 1-1 | `pyproject.toml` | script:移除 `aj`,注册 `agent-judges = "agent_judges.cli:app"` |
 | 1-2 | `reviewers/*.md`(20 个) | YAML→MD 机械迁移:frontmatter(name/description/model/weight/majority_vote/skills)+ 正文(persona = 原 system_prompt)。**迁移时移除 model 字段值**(= 宿主默认;存量 litellm 串在宿主命名空间下无意义),文件内注释说明可选宿主命名空间模型写法 |
 | 1-3 | `src/.../reviewer.py` | MD 解析(复用 skill.py 的 frontmatter 解析模式);Registry 同时兼容 `*.md`(优先)与 `*.yaml`(过渡期) |
 | 1-4 | `tests/test_reviewer.py` 等 | MD 解析与迁移回归用例 |

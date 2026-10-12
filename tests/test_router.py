@@ -1,4 +1,4 @@
-"""Router tests: RouteDecision, PROFILE_MAP, deterministic zero-LLM
+﻿"""Router tests: RouteDecision, PROFILE_MAP, deterministic zero-LLM
 reviewer selection (filter_by_scene / infer_scene_from_filename /
 deterministic_panel)."""
 
@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from adversarial_judge.router import (
+from agent_judges.router import (
     PROFILE_MAP,
     SCENES,
     RouteDecision,
